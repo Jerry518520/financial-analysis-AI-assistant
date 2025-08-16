@@ -1,0 +1,17 @@
+# Virtual Environment & Caches
+venv/
+.venv/
+__pycache__/
+.cache/
+
+# IDE / Editor specific settings
+.idea/
+.vscode/
+
+# Python artifacts
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables file
+.env
