@@ -21,6 +21,12 @@ dependencies = [
 packages = [{include = "financial_report_ai_assistant", from = "src"}]
 
 
+[tool.poetry.group.dev.dependencies]
+poethepoet = "^0.37.0"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poe.tasks]
+start = { cmd = "uvicorn financial_report_ai_assistant.api.main:app --reload --app-dir src", help = "Starts the FastAPI development server." }
