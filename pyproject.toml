@@ -23,6 +23,8 @@ packages = [{include = "financial_report_ai_assistant", from = "src"}]
 
 [tool.poetry.group.dev.dependencies]
 poethepoet = "^0.37.0"
+jupyterlab = "^4.4.6"
+ipykernel = "^6.30.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

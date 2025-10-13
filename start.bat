@@ -7,8 +7,12 @@ FOR /F "tokens=*" %%i IN ('poetry env info --path') DO (
 )
 
 echo.
-echo Environment activated! Welcome back.
-echo You are now in the project shell.
+echo Environment activated!
+echo Launching VS Code...
 
-:: Start a new command prompt session within the activated environment
+:: 使用 START 命令在一个新进程中打开 VS Code，避免与当前终端窗口关联
+start "" code .
+
+echo.
+echo All done. You can now use this activated terminal.
 cmd /k
