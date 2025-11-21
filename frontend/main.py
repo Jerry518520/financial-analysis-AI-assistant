@@ -1,65 +1,79 @@
+# 文件: frontend/main.py
 import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="洞察者 AI 财报助手", page_icon="📊", layout="wide")
+st.set_page_config(page_title="洞察者 AI", page_icon="🤖", layout="wide")
 
-with st.sidebar:
-    st.header("🤖 洞察者 Insightful")
-    st.markdown("---")
-    st.markdown("专为非专业人士打造的\n上市公司财报分析工具")
-
-st.title("📊 AI 财报分析助手 (表格提取版)")
-st.write("---")
+st.title("🤖 洞察者 (DeepSeek 版)")
 
 col1, col2 = st.columns([1, 2])
 
 with col1:
     st.subheader("1. 上传财报")
-    uploaded_file = st.file_uploader("请上传 PDF 文件", type="pdf")
+    uploaded_file = st.file_uploader("上传 PDF", type="pdf")
     
     if uploaded_file is not None:
-        if st.button("🚀 开始深度解析", type="primary"):
-            with st.spinner("AI 正在识别文档中的财务表格..."):
+        if st.button("🚀 开始解析", type="primary"):
+            with st.spinner("正在提取数据..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                    # 这里的 URL 还是指向你的本地后端
-                    response = requests.post("http://127.0.0.1:8000/upload", files=files)
-                    
-                    if response.status_code == 200:
-                        st.session_state.result = response.json()
-                        st.success("解析完成！")
+                    resp = requests.post("http://127.0.0.1:8000/upload", files=files)
+                    if resp.status_code == 200:
+                        st.session_state.result = resp.json()
+                        st.success("解析成功！")
                     else:
-                        st.error(f"服务器报错: {response.text}")
+                        st.error("解析失败")
                 except Exception as e:
-                    st.error(f"无法连接后端: {e}")
+                    st.error(f"连接错误: {e}")
 
 with col2:
-    st.subheader("2. 解析结果")
+    st.subheader("2. 智能分析")
     
     if 'result' in st.session_state:
-        res = st.session_state.result
-        data = res.get("analysis_result", {})
+        data = st.session_state.result.get("analysis_result", {})
         
-        # 1. 展示基本信息
-        st.metric("📄 总页数", data.get("page_count", 0))
+        # 拿到文本片段作为上下文
+        context_text = data.get("text_preview_snippet", "")
         
-        st.markdown("### 📋 发现的财务表格 (前5页预览)")
-        
+        # 展示表格
         tables = data.get("tables", [])
-        
         if tables:
-            for idx, table_info in enumerate(tables):
-                st.markdown(f"**表格 #{idx+1} (来源: 第 {table_info['page']} 页)**")
-                
-                # 把字典数据转回 DataFrame 以便展示
-                df_display = pd.DataFrame(table_info['data'])
-                st.dataframe(df_display, use_container_width=True)
-        else:
-            st.warning("在前5页中没有检测到明显的表格结构。")
-            
-        with st.expander("查看文本预览"):
-             st.info(data.get("text_preview_snippet", "无内容"))
-             
+            st.info(f"📊 发现 {len(tables)} 个表格")
+            with st.expander("查看表格"):
+                 for t in tables:
+                     st.dataframe(pd.DataFrame(t['data']))
+        
+        st.divider()
+        st.markdown("### 💬 对话 DeepSeek")
+        
+        # 聊天记录逻辑
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if prompt := st.chat_input("请输入问题..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                with st.spinner("DeepSeek 正在思考..."):
+                    try:
+                        payload = {"context": context_text, "question": prompt}
+                        res = requests.post("http://127.0.0.1:8000/chat", json=payload)
+                        
+                        if res.status_code == 200:
+                            ai_msg = res.json().get("answer", "错误")
+                        else:
+                            ai_msg = "服务器错误"
+                            
+                        st.markdown(ai_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+                    except Exception as e:
+                        st.error(f"网络错误: {e}")
     else:
-        st.info("👈 请先在左侧上传文件并点击分析")
+        st.info("👈 请先上传文件")

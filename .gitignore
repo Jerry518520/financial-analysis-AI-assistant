@@ -1,8 +1,10 @@
 # Virtual Environment & Caches
 venv/
 .venv/
+env/
 __pycache__/
 .cache/
+*.py[cod]
 
 # IDE / Editor specific settings
 .idea/
@@ -15,3 +17,8 @@ __pycache__/
 
 # Environment variables file
 .env
+.env.local
+# --- 补充配置 ---
+.DS_Store
+*.pdf
+Thumbs.db
