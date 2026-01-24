@@ -1,130 +1,141 @@
-# 文件: src/financial_report_ai_assistant/services/document_parser.py
 import os
 import hashlib
 import fitz  # PyMuPDF
+import re
 from llama_parse import LlamaParse
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ===========================
-# 🎯 狙击手配置 (Sniper Config)
-# ===========================
-# 这里填入你“侦察”到的高价值页码 (1-based，即你看到的页码)
-# 第 49 页: 预计是股权架构图 (复杂 Image)
-# 第 55 页: 预计是第一张表格 (Table)
-TARGET_PAGE_NUMBERS = [50, 56] 
-
-# 缓存目录
 CACHE_DIR = "cache_data"
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
-def get_cache_path(file_content: bytes, pages: List[int]) -> str:
-    """
-    生成带有页码标识的缓存文件名。
-    例如: llama_parsed_abc123_pages_49_55.md
-    """
-    file_hash = hashlib.md5(file_content).hexdigest()
-    pages_suffix = "_pages_" + "_".join(map(str, pages))
-    return os.path.join(CACHE_DIR, f"llama_parsed_{file_hash}{pages_suffix}.md")
+# 为了防止 LlamaParse 处理过多页面导致超时或消耗过多额度，设置一个软上限
+MAX_LLAMA_PAGES = 20 
 
-def create_sniper_pdf(file_content: bytes, target_pages: List[int]) -> str:
-    """
-    【狙击手切片】
-    只提取指定的页码，生成一个微型 PDF。
-    """
-    doc = fitz.open(stream=file_content, filetype="pdf")
-    total_pages = doc.page_count
-    
-    # 创建新文档
-    new_doc = fitz.open()
-    
-    print(f"✂️ [狙击模式] 原文档 {total_pages} 页，正在提取目标页: {target_pages} ...")
-    
-    valid_pages = []
-    for p in target_pages:
-        # 转换为 0-based 索引
-        idx = p - 1
-        if 0 <= idx < total_pages:
-            new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
-            valid_pages.append(p)
-        else:
-            print(f"⚠️ 警告: 目标页 {p} 超出文档范围，已跳过。")
-            
-    if len(valid_pages) == 0:
-        return None
-        
-    subset_filename = f"temp_sniper_{'_'.join(map(str, valid_pages))}.pdf"
-    new_doc.save(subset_filename)
-    new_doc.close()
-    doc.close()
-    
-    return subset_filename
+def get_cache_path(file_content: bytes) -> str:
+    # 简单的哈希缓存，避免重复解析同一文件
+    file_hash = hashlib.md5(file_content).hexdigest()
+    return os.path.join(CACHE_DIR, f"parsed_hybrid_{file_hash}.md")
 
 def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
-    print(f"🚀 [Phase 3.3] 启动 LlamaParse 狙击模式，目标页: {TARGET_PAGE_NUMBERS}")
+    print(f"🚀 [Hybrid Parser] 启动混合解析引擎...")
     
-    # 1. 检查缓存
-    cache_path = get_cache_path(file_content, TARGET_PAGE_NUMBERS)
-    
+    # 1. 检查全量缓存
+    cache_path = get_cache_path(file_content)
     if os.path.exists(cache_path):
-        print(f"♻️ 发现本地缓存！任务已完成，直接加载: {cache_path}")
+        print(f"♻️ 发现本地完整缓存！直接加载...")
         with open(cache_path, "r", encoding="utf-8") as f:
-            full_markdown = f.read()
-        return {
-            "page_count": len(TARGET_PAGE_NUMBERS),
-            "text_preview_snippet": full_markdown[:500],
-            "full_text": full_markdown,
-            "tables": [],
-            "status": "success"
-        }
+            full_text = f.read()
+        return {"text_preview_snippet": full_text[:500], "full_text": full_text, "status": "success"}
 
-    # 2. 制作“狙击”文件
-    target_file = create_sniper_pdf(file_content, TARGET_PAGE_NUMBERS)
-    
-    if not target_file:
-        return {"status": "error", "error": "无法生成目标切片，请检查页码配置"}
-
-    # 3. 发射！(调用 API)
     try:
-        api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-        if not api_key:
-            return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
+        doc = fitz.open(stream=file_content, filetype="pdf")
+        total_pages = len(doc)
+        
+        table_pages_indices = []
+        text_pages_content = {} # {page_index: text_content}
+
+        print(f"🕵️ 正在扫描 {total_pages} 页文档结构...")
+        
+        # 2. 第一次扫描：分流 (Table Detection)
+        for i, page in enumerate(doc):
+            # 使用 PyMuPDF 的 find_tables() 寻找表格
+            # strategy='lines' 适合财报这种有明显边框的表
+            # vertical_strategy='text' 辅助无框表
+            try:
+                tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
+                
+                # 如果发现表格，且表格面积看起来不是误判（例如不是页眉页脚的小框）
+                has_valid_table = False
+                if tables.tables:
+                    # 简单判断：如果表格覆盖了一定区域
+                    for tab in tables.tables:
+                        if len(tab.cells) > 4: # 至少有4个格子的才算表，过滤掉奇怪的框
+                            has_valid_table = True
+                            break
+                
+                if has_valid_table:
+                    table_pages_indices.append(i)
+                else:
+                    # 普通页面：直接提取文本
+                    text = page.get_text()
+                    text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+            except Exception as e:
+                print(f"⚠️ Page {i+1} 检测出错: {e}, 降级为普通文本")
+                text = page.get_text()
+                text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+
+        print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，将送往 LlamaParse。剩余 {len(text_pages_content)} 页本地提取。")
+
+        # 3. 处理表格页面 (LlamaParse)
+        llama_pages_content = {} # {page_index: markdown_content}
+        
+        if table_pages_indices:
+            # 如果表格页太多，按优先级截断（防止 demo 跑太久）
+            target_indices = table_pages_indices[:MAX_LLAMA_PAGES]
+            if len(table_pages_indices) > MAX_LLAMA_PAGES:
+                print(f"⚠️ 表格页过多 ({len(table_pages_indices)} > {MAX_LLAMA_PAGES})，仅处理前 {MAX_LLAMA_PAGES} 页表格...")
+                # 对于那些被截断的表格页，我们还是要提取纯文本，不能丢弃
+                for idx in table_pages_indices[MAX_LLAMA_PAGES:]:
+                    page = doc[idx]
+                    text = page.get_text()
+                    text_pages_content[idx] = f"--- Page {idx+1} (Table Skipped) ---\n{text}\n"
             
-        print(f"💸 正在发送切片文件 {target_file} 到 LlamaCloud (消耗 {len(TARGET_PAGE_NUMBERS)} 点数)...")
+            # 构建临时 PDF 子集
+            subset_filename = f"temp_tables_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
+            new_doc = fitz.open()
+            for idx in target_indices:
+                new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+            new_doc.save(subset_filename)
+            new_doc.close()
+            
+            # 发送给 LlamaParse
+            print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
+            api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+            if not api_key: return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
+            
+            parser = LlamaParse(result_type="markdown", premium_mode=True, language="en")
+            documents = parser.load_data(subset_filename)
+            
+            # 映射回原始页码
+            # LlamaParse 返回的 documents 列表顺序对应我们 subset pdf 的页顺序
+            for idx, result_doc in enumerate(documents):
+                if idx < len(target_indices):
+                    original_page_idx = target_indices[idx]
+                    llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (Table Enhanced) ---\n{result_doc.text}\n"
+            
+            # 清理临时文件
+            if os.path.exists(subset_filename):
+                try:
+                    os.remove(subset_filename)
+                except:
+                    pass
+
+        doc.close()
+
+        # 4. 合并所有内容 (按页码顺序)
+        final_full_text = []
+        for i in range(total_pages):
+            if i in llama_pages_content:
+                final_full_text.append(llama_pages_content[i])
+            elif i in text_pages_content:
+                final_full_text.append(text_pages_content[i])
         
-        parser = LlamaParse(
-            result_type="markdown", 
-            premium_mode=True, 
-            language="en",
-            verbose=True
-        )
+        full_text_str = "\n".join(final_full_text)
         
-        documents = parser.load_data(target_file)
-        full_markdown = "\n\n".join([doc.text for doc in documents])
-        
-        print(f"✅ LlamaParse 狙击成功！")
-        
-        # 4. 写入缓存
+        # 5. 写入缓存
         with open(cache_path, "w", encoding="utf-8") as f:
-            f.write(full_markdown)
-        print(f"💾 战果已保存至: {cache_path}")
-        
+            f.write(full_text_str)
+
         return {
-            "page_count": len(TARGET_PAGE_NUMBERS),
-            "text_preview_snippet": full_markdown[:500],
-            "full_text": full_markdown, 
-            "tables": [],
+            "text_preview_snippet": full_text_str[:500], 
+            "full_text": full_text_str, 
             "status": "success"
         }
 
     except Exception as e:
-        print(f"❌ 狙击失败: {e}")
+        print(f"❌ 解析失败: {e}")
         return {"status": "error", "error": str(e)}
-        
-    finally:
-        if target_file and os.path.exists(target_file):
-            try: os.remove(target_file)
-            except: pass
