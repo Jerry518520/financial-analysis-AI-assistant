@@ -30,6 +30,10 @@ dependencies = [
 [tool.poetry]
 packages = [{include = "financial_report_ai_assistant", from = "src"}]
 
+[[tool.poetry.source]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+priority = "primary"
 
 [tool.poetry.group.dev.dependencies]
 poethepoet = "^0.37.0"

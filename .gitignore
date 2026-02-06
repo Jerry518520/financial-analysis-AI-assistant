@@ -9,6 +9,7 @@ __pycache__/
 # IDE / Editor specific settings
 .idea/
 .vscode/
+.trae/
 
 # Python artifacts
 *.pyc
@@ -18,7 +19,15 @@ __pycache__/
 # Environment variables file
 .env
 .env.local
-# --- 补充配置 ---
+
+# App Data & Cache
+cache_data/
+faiss_index/
+
+# Logs
+*.log
+
+# System
 .DS_Store
 *.pdf
 Thumbs.db
