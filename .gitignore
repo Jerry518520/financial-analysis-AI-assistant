@@ -1,0 +1,33 @@
+# Virtual Environment & Caches
+venv/
+.venv/
+env/
+__pycache__/
+.cache/
+*.py[cod]
+
+# IDE / Editor specific settings
+.idea/
+.vscode/
+.trae/
+
+# Python artifacts
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables file
+.env
+.env.local
+
+# App Data & Cache
+cache_data/
+faiss_index/
+
+# Logs
+*.log
+
+# System
+.DS_Store
+*.pdf
+Thumbs.db
