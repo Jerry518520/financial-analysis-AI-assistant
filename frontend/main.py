@@ -2,6 +2,10 @@
 import streamlit as st
 import requests
 import pandas as pd
+import os
+
+# 获取 API 地址，默认是 localhost，在 Docker 中会被覆盖为 http://backend:8000
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(page_title="洞察者 AI", page_icon="🤖", layout="wide")
 
@@ -18,7 +22,7 @@ with col1:
             with st.spinner("正在提取数据..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                    resp = requests.post("http://127.0.0.1:8000/upload", files=files)
+                    resp = requests.post(f"{API_URL}/upload", files=files)
                     if resp.status_code == 200:
                         st.session_state.result = resp.json()
                         st.success("解析成功！")
@@ -56,7 +60,7 @@ with col2:
             with st.spinner("正在综合全篇财报生成摘要，请稍候..."):
                 try:
                     # 调用后端分析接口
-                    res = requests.post("http://127.0.0.1:8000/analyze/summary", json={"focus": "general"})
+                    res = requests.post(f"{API_URL}/analyze/summary", json={"focus": "general"})
                     if res.status_code == 200:
                         summary_text = res.json().get("summary", "生成失败")
                         st.session_state.summary = summary_text
@@ -88,7 +92,7 @@ with col2:
                 with st.spinner("DeepSeek 正在思考..."):
                     try:
                         payload = {"context": context_text, "question": prompt}
-                        res = requests.post("http://127.0.0.1:8000/chat", json=payload)
+                        res = requests.post(f"{API_URL}/chat", json=payload)
                         
                         if res.status_code == 200:
                             ai_msg = res.json().get("answer", "错误")

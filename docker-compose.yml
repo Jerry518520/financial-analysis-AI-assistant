@@ -3,9 +3,37 @@ version: '3.8'
 services:
   backend:
     build: .
+    container_name: financial_report_backend
     ports:
-      - "8000:80"
-    # volumes:
-    #   - ./src:/app/src
-    # environment:
-    #   - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - "8000:8000"
+    volumes:
+      # 挂载缓存目录，确保重启后缓存不丢失
+      - ./cache_data:/app/cache_data
+      - ./faiss_index:/app/faiss_index
+      # 开发模式下可以挂载源代码，实现热重载 (可选)
+      # - ./src:/app/src
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
+      # 如果有其他环境变量，继续添加
+    command: uvicorn financial_report_ai_assistant.api.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - app-network
+
+  frontend:
+    build: .
+    container_name: financial_report_frontend
+    ports:
+      - "8501:8501"
+    environment:
+      # 告诉前端，后端的地址在哪里 (使用 docker service name)
+      - API_URL=http://backend:8000
+    depends_on:
+      - backend
+    command: streamlit run frontend/main.py --server.address 0.0.0.0 --server.port 8501
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
