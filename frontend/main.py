@@ -45,6 +45,30 @@ with col2:
                      st.dataframe(pd.DataFrame(t['data']))
         
         st.divider()
+        
+        # --- 新增：智能摘要板块 ---
+        st.markdown("### 🧠 智能分析报告")
+        
+        if "summary" not in st.session_state:
+            st.session_state.summary = None
+            
+        if st.button("✨ 生成核心摘要"):
+            with st.spinner("正在综合全篇财报生成摘要，请稍候..."):
+                try:
+                    # 调用后端分析接口
+                    res = requests.post("http://127.0.0.1:8000/analyze/summary", json={"focus": "general"})
+                    if res.status_code == 200:
+                        summary_text = res.json().get("summary", "生成失败")
+                        st.session_state.summary = summary_text
+                    else:
+                        st.error(f"生成失败: {res.status_code}")
+                except Exception as e:
+                    st.error(f"请求错误: {e}")
+
+        if st.session_state.summary:
+            st.markdown(st.session_state.summary)
+            
+        st.divider()
         st.markdown("### 💬 对话 DeepSeek")
         
         # 聊天记录逻辑

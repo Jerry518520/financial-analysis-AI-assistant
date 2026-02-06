@@ -6,11 +6,16 @@ import uvicorn
 
 # 导入所有服务
 from financial_report_ai_assistant.services.document_parser import parse_pdf_bytes
-from src.financial_report_ai_assistant.services.ai_chat import get_ai_response
+# from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
+from financial_report_ai_assistant.core.agent import run_agent_query
 # 【新增】导入 RAG 服务
-from src.financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag
+# 【新增】导入 Analysis 路由
+from financial_report_ai_assistant.api.analysis import router as analysis_router
 
 app = FastAPI(title="AI 财报分析助手")
+
+app.include_router(analysis_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,11 +67,19 @@ async def chat_with_report(request: ChatRequest):
     relevant_context = query_rag(request.question)
     
     print(f"🔍 用户问: {request.question}")
-    print(f"📖 RAG 检索到的背景: {relevant_context[:100]}...") # 打印日志看看
+    # print(f"📖 RAG 检索到的背景: {relevant_context[:100]}...") # 打印日志看看
     
-    # 2. 发给 DeepSeek
-    # 用检索到的片段，替换掉请求里的 context
-    answer = get_ai_response(relevant_context, request.question)
+    # 2. 发给 Agent (DeepSeek + Tools)
+    # 构造包含背景信息的完整 Prompt
+    full_query = f"""
+    【背景信息】：
+    {relevant_context}
+    
+    【用户问题】：
+    {request.question}
+    """
+    
+    answer = run_agent_query(full_query)
     
     return {"answer": answer}
 

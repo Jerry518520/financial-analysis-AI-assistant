@@ -15,6 +15,37 @@ if not os.path.exists(CACHE_DIR):
 # 为了防止 LlamaParse 处理过多页面导致超时或消耗过多额度，设置一个软上限
 MAX_LLAMA_PAGES = 20 
 
+def _is_suspected_table_page(page) -> bool:
+    """
+    使用启发式规则判断页面是否可能包含无边框表格。
+    规则：
+    1. 关键词匹配（财报常见表头）
+    2. 数字密度检测（表格页通常包含大量数字）
+    """
+    text = page.get_text()
+    
+    # 1. 关键词列表 (中英文)
+    table_keywords = [
+        "Consolidated Balance Sheet", "Consolidated Income Statement", "Cash Flow",
+        "合并资产负债表", "合并利润表", "合并现金流量表", "主要财务指标",
+        "资产", "负债", "权益", "收入", "费用", "Assets", "Liabilities", "Equity", "Revenue"
+    ]
+    
+    has_keyword = any(kw in text for kw in table_keywords)
+    
+    # 2. 数字密度检测
+    # 统计数字字符在总字符中的占比，或者统计连续数字串的数量
+    # 简单策略：如果页面中有超过 15 个独立的数字串（长度>1），且包含关键词，则大概率是表格
+    # 匹配像 1,234.56 或 2023 这样的数字
+    digit_sequences = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b', text)
+    valid_digits = [d for d in digit_sequences if len(d) > 1]
+    
+    # 阈值可以调整
+    if has_keyword and len(valid_digits) > 15:
+        return True
+        
+    return False
+
 def get_cache_path(file_content: bytes) -> str:
     # 简单的哈希缓存，避免重复解析同一文件
     file_hash = hashlib.md5(file_content).hexdigest()
@@ -57,6 +88,12 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                             has_valid_table = True
                             break
                 
+                # 如果 PyMuPDF 没检测到，尝试启发式检测（针对无边框表格）
+                if not has_valid_table:
+                    if _is_suspected_table_page(page):
+                        print(f"👀 Page {i+1} 疑似包含无边框表格（启发式检测命中），将送往 LlamaParse。")
+                        has_valid_table = True
+
                 if has_valid_table:
                     table_pages_indices.append(i)
                 else:
@@ -97,7 +134,8 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
             api_key = os.getenv("LLAMA_CLOUD_API_KEY")
             if not api_key: return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
             
-            parser = LlamaParse(result_type="markdown", premium_mode=True, language="en")
+            # 针对中文财报优化，使用 zh 语言代码
+            parser = LlamaParse(result_type="markdown", premium_mode=True, language="zh")
             documents = parser.load_data(subset_filename)
             
             # 映射回原始页码
