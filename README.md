@@ -46,14 +46,28 @@
 
 这是最简单、最推荐的运行方式，无需在本地配置复杂的 Python 环境。
 
+### 0. 克隆项目
+
+```bash
+git clone https://github.com/你的用户名/financial-report-ai-assistant.git
+cd financial-report-ai-assistant
+```
+
 ### 1. 前置准备
 *   安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 并启动。
 *   获取 API Key:
-    *   **DeepSeek API Key**: 用于大模型对话。
+    *   **DeepSeek API Key**: 用于大模型对话（可在 [DeepSeek](https://platform.deepseek.com/) 申请）。
     *   **LlamaCloud API Key**: 用于 PDF 解析 (可在 [LlamaCloud](https://cloud.llamaindex.ai/) 免费申请)。
 
 ### 2. 配置环境变量
-在项目根目录下创建一个 `.env` 文件，填入你的 Key：
+
+复制环境变量模板：
+
+```bash
+cp env.template .env
+```
+
+然后编辑 `.env` 文件，填入你的 API Key：
 
 ```env
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
@@ -70,6 +84,56 @@ docker-compose up --build
 ### 4. 访问应用
 *   **前端界面**: 打开浏览器访问 [http://localhost:8501](http://localhost:8501)
 *   **后端文档**: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+### 5. 停止应用
+
+```bash
+# 按 Ctrl + C 停止
+
+# 或者完全清理容器
+docker-compose down
+```
+
+---
+
+## 🖥️ 前置软件要求
+
+| 软件 | 说明 | 下载地址 |
+|------|------|----------|
+| Docker Desktop | 容器运行环境（必须） | [点击下载](https://www.docker.com/products/docker-desktop) |
+| Git | 版本控制工具（可选，用于克隆项目） | [点击下载](https://git-scm.com) |
+
+> 💡 **没有 Git 怎么办？** 可以直接点击 GitHub 页面上的绿色 "Code" 按钮，选择 "Download ZIP"，解压后进入目录即可。
+
+---
+
+## ❓ 常见问题
+
+**Q: 第一次启动很慢怎么办？**
+
+A: 首次运行需要下载 Docker 镜像并安装依赖，大约需要 3-5 分钟。后续启动会很快。
+
+**Q: Windows 用户 `cp` 命令不能用？**
+
+A: 使用 PowerShell：
+```powershell
+copy .env.example .env
+```
+或者直接复制文件并重命名为 `.env`。
+
+**Q: 启动失败怎么办？**
+
+A: 检查以下几点：
+1. Docker Desktop 是否已启动（任务栏图标是否显示）
+2. `.env` 文件是否已创建且 API Key 是否正确
+3. API Key 是否还有额度
+
+**Q: 如何更新到最新版本？**
+
+```bash
+git pull
+docker-compose up --build
+```
 
 ---
 
