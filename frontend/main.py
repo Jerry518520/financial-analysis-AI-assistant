@@ -75,10 +75,53 @@ with col2:
         st.divider()
         st.markdown("### 💬 对话 DeepSeek")
         
+        # 预设问题
+        preset_questions = [
+            "这份财报的营收是多少？",
+            "净利润同比增长了多少？",
+            "公司的毛利率是多少？",
+            "请生成一份财务摘要"
+        ]
+        
+        st.markdown("#### 💡 常见问题")
+        cols = st.columns(2)
+        for i, question in enumerate(preset_questions):
+            col = cols[i % 2]
+            with col:
+                if st.button(f"📝 {question}", key=f"preset_{i}"):
+                    # 点击预设问题，添加到输入框
+                    st.session_state.pending_question = question
+        
         # 聊天记录逻辑
         if "messages" not in st.session_state:
             st.session_state.messages = []
+        
+        # 处理预设问题
+        if "pending_question" in st.session_state:
+            prompt = st.session_state.pending_question
+            del st.session_state.pending_question
+            
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
+            with st.chat_message("assistant"):
+                with st.spinner("DeepSeek 正在思考..."):
+                    try:
+                        payload = {"context": context_text, "question": prompt}
+                        res = requests.post(f"{API_URL}/chat", json=payload)
+                        
+                        if res.status_code == 200:
+                            ai_msg = res.json().get("answer", "错误")
+                        else:
+                            ai_msg = "服务器错误"
+                            
+                        st.markdown(ai_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+                    except Exception as e:
+                        st.error(f"网络错误: {e}")
+        
+        # 正常输入
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])

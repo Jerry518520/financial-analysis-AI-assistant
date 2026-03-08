@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     POETRY_VERSION=2.0.1 \
     POETRY_HOME="/opt/poetry" \
     POETRY_VIRTUALENVS_CREATE=false \
-    PYTHONPATH="/app/src"
+    PYTHONPATH="/app/src" \
+    HF_ENDPOINT=https://hf-mirror.com
 
 # 将 Poetry 添加到 PATH
 ENV PATH="$POETRY_HOME/bin:$PATH"
