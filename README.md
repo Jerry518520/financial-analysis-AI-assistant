@@ -49,8 +49,8 @@
 ### 0. 克隆项目
 
 ```bash
-git clone https://github.com/你的用户名/financial-report-ai-assistant.git
-cd financial-report-ai-assistant
+git clone https://github.com/Jerry518520/financial-analysis-AI-assistant
+cd financial-analysis-AI-assistant
 ```
 
 ### 1. 前置准备
