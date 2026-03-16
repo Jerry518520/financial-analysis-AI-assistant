@@ -1,13 +1,16 @@
 # 文件: src/financial_report_ai_assistant/services/rag_service.py
 import torch
 import os
+from pathlib import Path
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 # ⚠️ 关键点：必须引入 MarkdownTextSplitter
 from langchain_text_splitters import MarkdownTextSplitter 
 
 vector_store = None
-INDEX_PATH = "faiss_index"
+# 使用项目根目录作为基础路径
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+INDEX_PATH = PROJECT_ROOT / "faiss_index"
 
 def get_device():
     # ⚠️ 关键点：既然修好了 torch，一定要用 cuda
@@ -43,7 +46,7 @@ def build_vector_store(full_text: str):
 
         print("🧠 正在进行向量化...")
         vector_store = FAISS.from_texts(chunks, embeddings)
-        vector_store.save_local(INDEX_PATH)
+        vector_store.save_local(str(INDEX_PATH))
         print(f"🎉 索引构建成功并已保存！包含 {vector_store.index.ntotal} 条向量。")
         return True
         
@@ -53,7 +56,9 @@ def build_vector_store(full_text: str):
 
 def load_vector_store():
     global vector_store
-    if os.path.exists(INDEX_PATH):
+    index_path_str = str(INDEX_PATH)
+    print(f"🔍 尝试加载向量库: {index_path_str}")
+    if os.path.exists(index_path_str):
         device = get_device()
         print(f"♻️ 发现本地向量索引，正在加载 (Device: {device})...")
         try:
@@ -62,7 +67,7 @@ def load_vector_store():
                 model_kwargs={'device': device}
             )
             # allow_dangerous_deserialization=True is needed for recent langchain versions if loading pickle
-            vector_store = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
+            vector_store = FAISS.load_local(index_path_str, embeddings, allow_dangerous_deserialization=True)
             print("✅ 本地索引加载成功！")
             return True
         except Exception as e:
