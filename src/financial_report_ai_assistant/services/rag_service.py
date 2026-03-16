@@ -22,6 +22,8 @@ def build_vector_store(full_text: str):
     global vector_store
     device = get_device()
     print(f"🔥 RAG 服务启动 | 计算设备: {device}")
+    print(f"📂 INDEX_PATH: {INDEX_PATH}")
+    print(f"📂 INDEX_PATH (str): {str(INDEX_PATH)}")
 
     try:
         embeddings = HuggingFaceEmbeddings(
@@ -77,10 +79,14 @@ def load_vector_store():
 
 def query_rag(question: str, top_k: int = 5):
     global vector_store
+    print(f"🔍 query_rag 被调用 | 问题: {question}")
     if vector_store is None:
-        # 尝试懒加载
+        print("⚠️ vector_store 为空，尝试加载...")
         if not load_vector_store():
+            print("❌ 加载失败，返回错误消息")
             return "系统提示：知识库尚未建立，且无本地缓存。"
     
+    print("✅ vector_store 已就绪，执行相似度搜索...")
     docs = vector_store.similarity_search(question, k=top_k)
+    print(f"📄 检索到 {len(docs)} 个文档")
     return "\n\n".join([doc.page_content for doc in docs])
