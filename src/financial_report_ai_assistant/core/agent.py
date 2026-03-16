@@ -1,6 +1,9 @@
-from langgraph.prebuilt import create_react_agent
+from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import ToolExecutor, ToolInvocation
+from typing import TypedDict, List, Optional, Union, Annotated
+import operator
 import os
 from dotenv import load_dotenv
 from financial_report_ai_assistant.services.financial_calculator import (
@@ -12,6 +15,19 @@ from financial_report_ai_assistant.services.financial_calculator import (
 )
 
 load_dotenv()
+
+MAX_ITERATIONS = 5
+
+class AgentState(TypedDict):
+    question: str
+    context: str
+    plan: List[str]
+    tool_calls: List[str]
+    tool_results: List[str]
+    reflection: str
+    final_answer: str
+    iteration: int
+    should_continue: bool
 
 # 1. 定义 Tools - 盈利能力
 @tool
@@ -102,28 +118,24 @@ def tool_analyze_trend(values: list) -> str:
     res = analyze_trend(values)
     return str(res)
 
-# 6. 定义 Tools - 同比分析
 @tool
 def tool_analyze_yoy(current: float, previous: float) -> str:
     """进行同比分析。输入本期数值和上期数值。"""
     res = analyze_yoy(current, previous)
     return str(res)
 
-# 7. 定义 Tools - 行业对比
 @tool
 def tool_compare_to_industry(value: float, industry_avg: float) -> str:
     """与行业平均对比。输入公司数值和行业平均值。"""
     res = compare_to_industry(value, industry_avg)
     return str(res)
 
-# 8. 定义 Tools - 图表数据生成
 @tool
 def tool_generate_chart_data(years: list, values: list, metric_name: str = "指标") -> str:
     """生成图表数据。输入年份列表和数值列表，如 years=[2021,2022,2023], values=[100,120,150]。"""
     res = generate_chart_data(years, values, metric_name)
     return str(res)
 
-# 9. 定义 Tools - 统计计算
 @tool
 def tool_calculate_avg(values: list) -> str:
     """计算平均值。输入数值列表。"""
@@ -148,81 +160,281 @@ def tool_calculate_variance(values: list) -> str:
     res = calculate_variance(values)
     return str(res)
 
-# 2. Agent 构建
-def create_financial_agent():
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        print("⚠️ Warning: DEEPSEEK_API_KEY not found.")
-        return None
-    
-    # DeepSeek V3/R1 目前对 Function Calling 支持可能有限，视具体版本而定
-    # 如果是 DeepSeek-V3，通常支持 OpenAI 格式的 Tools
-    llm = ChatOpenAI(
-        model="deepseek-chat",
-        api_key=api_key,
-        base_url="https://api.deepseek.com",
-        temperature=0.1 # 计算任务需要低温度
-    )
-    
-    tools = [
-        # 盈利能力
+def get_tools():
+    return [
         tool_calculate_growth_rate,
         tool_calculate_margin,
         tool_calculate_roe,
         tool_calculate_eps,
         tool_calculate_pe,
-        # 偿债能力
         tool_calculate_debt_ratio,
         tool_calculate_current_ratio,
         tool_calculate_quick_ratio,
-        # 运营能力
         tool_calculate_turnover,
         tool_calculate_inventory_turnover,
-        # 股息
         tool_calculate_dividend_yield,
-        # 趋势分析
         tool_analyze_trend,
         tool_analyze_yoy,
-        # 行业对比
         tool_compare_to_industry,
-        # 图表数据
         tool_generate_chart_data,
-        # 统计分析
         tool_calculate_avg,
         tool_calculate_max,
         tool_calculate_min,
         tool_calculate_variance,
     ]
-    
-    system_prompt = """你是一位专业的金融分析师。你的任务是根据用户提供的【背景信息】（通常来自财报检索）来回答问题。
-    
-    原则：
-    1. 如果问题涉及具体的财务指标计算（如增长率、利润率、ROE、资产负债率等），你必须调用提供的工具进行精确计算，严禁自己估算。
-    2. 如果背景信息中没有足够的数据支持计算或回答，请诚实告知用户。
-    3. 回答要条理清晰，数据准确。
-    4. 当用户询问以下类型的指标时，必须使用对应的工具：
-       - 增长类：使用 tool_calculate_growth_rate
-       - 盈利类：使用 tool_calculate_margin、tool_calculate_roe、tool_calculate_eps、tool_calculate_pe
-       - 偿债类：使用 tool_calculate_debt_ratio、tool_calculate_current_ratio、tool_calculate_quick_ratio
-       - 运营类：使用 tool_calculate_turnover、tool_calculate_inventory_turnover
-       - 股息类：使用 tool_calculate_dividend_yield
-    """
-    
-    # 使用 LangGraph 的 prebuilt agent
-    # 注意：当前版本的 langgraph 使用 prompt 参数而不是 state_modifier
-    agent_executor = create_react_agent(llm, tools, prompt=system_prompt)
-    
-    return agent_executor
 
-def run_agent_query(query: str):
+def create_llm():
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        print("⚠️ Warning: DEEPSEEK_API_KEY not found.")
+        return None
+    return ChatOpenAI(
+        model="deepseek-chat",
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+        temperature=0.1
+    )
+
+# ==================== Agent 核心逻辑 ====================
+
+def planner_node(state: AgentState):
+    """规划器：将复杂问题分解为多个子任务"""
+    llm = create_llm()
+    if not llm:
+        return {"plan": ["错误：API Key 未配置"]}
+    
+    planner_prompt = f"""你是一位专业的金融分析师助手。用户提出了一个复杂问题，你需要将其分解为多个可执行的子任务。
+
+【用户问题】：{state['question']}
+
+【背景信息】：
+{state['context']}
+
+请分析这个问题需要哪些步骤才能回答。输出一个任务列表，每行一个任务。
+格式示例：
+1. 从背景信息中提取2023年营收数据
+2. 从背景信息中提取2022年营收数据
+3. 计算同比增长率
+4. 与行业平均对比
+
+只输出任务列表，不要其他内容。
+"""
+    
+    response = llm.invoke(planner_prompt)
+    plan = response.content.strip().split('\n')
+    plan = [p.strip() for p in plan if p.strip()]
+    
+    return {"plan": plan, "iteration": 0}
+
+def executor_node(state: AgentState):
+    """执行器：根据当前计划调用工具"""
+    llm = create_llm()
+    if not llm:
+        return {"tool_results": ["错误：API Key 未配置"]}
+    
+    tools = get_tools()
+    tool_executor = ToolExecutor(tools)
+    
+    current_plan = state.get("plan", [])
+    previous_results = state.get("tool_results", [])
+    
+    executor_prompt = f"""你是一位专业的金融分析师。根据用户的【问题】和【背景信息】，决定需要调用哪些工具来完成任务。
+
+【用户问题】：{state['question']}
+
+【背景信息】：
+{state['context']}
+
+【待完成任务】：
+{chr(10).join(current_plan)}
+
+【已完成的工具调用结果】：
+{chr(10).join(previous_results) if previous_results else "无"}
+
+请分析需要调用哪个工具来推进任务。每个工具调用需要提供：
+1. 工具名称
+2. 工具参数（从背景信息中提取具体数值）
+
+如果需要调用工具，输出格式如下（JSON格式）：
+{{"name": "工具函数名", "args": {{"参数名": 参数值}}}}
+
+如果所有任务都已完成，或不需要再调用工具，请输出：
+{{"name": "FINISH", "args": {{}}}}
+
+只输出JSON，不要其他内容。
+"""
+    
+    response = llm.invoke(executor_prompt)
+    response_text = response.content.strip()
+    
+    import json
+    import re
+    
+    try:
+        if "FINISH" in response_text:
+            return {"should_continue": False}
+        
+        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        if json_match:
+            tool_call = json.loads(json_match.group())
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("args", {})
+            
+            invocation = ToolInvocation(
+                tool=tool_name,
+                tool_input=tool_args
+            )
+            result = tool_executor.invoke(invocation)
+            
+            return {
+                "tool_calls": [f"{tool_name}({tool_args})"],
+                "tool_results": [str(result)],
+                "iteration": state.get("iteration", 0) + 1
+            }
+    except Exception as e:
+        return {"tool_results": [f"执行出错: {str(e)}"]}
+    
+    return {"should_continue": False}
+
+def reflection_node(state: AgentState):
+    """反思节点：检查工具返回结果是否合理"""
+    llm = create_llm()
+    if not llm:
+        return {"reflection": "API Key 未配置"}
+    
+    tool_results = state.get("tool_results", [])
+    plan = state.get("plan", [])
+    iteration = state.get("iteration", 0)
+    
+    reflection_prompt = f"""你是一位专业的金融分析师。请审查刚才的工具执行结果，判断是否合理。
+
+【用户问题】：{state['question']}
+
+【待完成任务】：
+{chr(10).join(plan)}
+
+【工具执行结果】：
+{chr(10).join(tool_results) if tool_results else "无"}
+
+请进行以下检查：
+1. 数值是否合理？（如增长率是否在-100%到500%之间，百分比是否在0-100%之间）
+2. 数据是否来自可靠的背景信息？
+3. 任务是否已完成？
+
+请输出以下格式的判断：
+- 如果结果合理且任务完成：FINISH
+- 如果结果合理但需要继续：CONTINUE
+- 如果结果异常需要重新执行：RETRY（并说明原因）
+
+只输出判断结果和简短原因，不要其他内容。
+"""
+    
+    response = llm.invoke(reflection_prompt)
+    reflection = response.content.strip()
+    
+    should_continue = "FINISH" not in reflection and iteration < MAX_ITERATIONS
+    
+    return {"reflection": reflection, "should_continue": should_continue}
+
+def answer_node(state: AgentState):
+    """生成最终回答"""
+    llm = create_llm()
+    if not llm:
+        return {"final_answer": "Agent 初始化失败，请检查 API Key。"}
+    
+    context = state.get("context", "")
+    tool_results = state.get("tool_results", [])
+    plan = state.get("plan", [])
+    reflection = state.get("reflection", "")
+    
+    answer_prompt = f"""你是一位专业的金融分析师。请根据以下信息生成最终回答。
+
+【用户问题】：{state['question']}
+
+【背景信息】：
+{context}
+
+【任务列表】：
+{chr(10).join(plan)}
+
+【工具执行结果】：
+{chr(10).join(tool_results) if tool_results else "无"}
+
+【反思结果】：
+{reflection}
+
+请生成一个完整、专业的回答。回答要求：
+1. 直接回答用户的问题
+2. 包含具体的数值和计算结果
+3. 如有需要，给出分析和建议
+4. 使用 Markdown 格式
+"""
+    
+    response = llm.invoke(answer_prompt)
+    return {"final_answer": response.content}
+
+def should_continue_edge(state: AgentState) -> str:
+    """判断是否继续循环"""
+    if state.get("should_continue", False):
+        return "continue"
+    return "end"
+
+def build_agent_graph():
+    """构建 Agent 工作流图"""
+    workflow = StateGraph(AgentState)
+    
+    workflow.add_node("planner", planner_node)
+    workflow.add_node("executor", executor_node)
+    workflow.add_node("reflection", reflection_node)
+    workflow.add_node("answer", answer_node)
+    
+    workflow.set_entry_point("planner")
+    
+    workflow.add_edge("planner", "executor")
+    workflow.add_edge("executor", "reflection")
+    
+    workflow.add_conditional_edges(
+        "reflection",
+        should_continue_edge,
+        {
+            "continue": "executor",
+            "end": "answer"
+        }
+    )
+    
+    workflow.add_edge("answer", END)
+    
+    return workflow.compile()
+
+_agent_graph = None
+
+def create_financial_agent():
+    global _agent_graph
+    if _agent_graph is None:
+        _agent_graph = build_agent_graph()
+    return _agent_graph
+
+def run_agent_query(query: str, context: str = ""):
+    """运行真正的 Agent"""
     agent = create_financial_agent()
-    if agent:
-        try:
-            # LangGraph invoke 接受 messages 列表
-            result = agent.invoke({"messages": [("user", query)]})
-            # 结果在 messages 的最后一条
-            return result["messages"][-1].content
-        except Exception as e:
-            return f"Agent 执行出错: {str(e)}"
-    else:
+    if not agent:
         return "Agent 初始化失败，请检查 API Key。"
+    
+    try:
+        initial_state = {
+            "question": query,
+            "context": context,
+            "plan": [],
+            "tool_calls": [],
+            "tool_results": [],
+            "reflection": "",
+            "final_answer": "",
+            "iteration": 0,
+            "should_continue": True
+        }
+        
+        result = agent.invoke(initial_state)
+        return result.get("final_answer", "Agent 执行完成，但未生成回答。")
+    
+    except Exception as e:
+        return f"Agent 执行出错: {str(e)}"

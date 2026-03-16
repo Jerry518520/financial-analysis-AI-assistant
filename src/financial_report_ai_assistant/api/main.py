@@ -45,12 +45,16 @@ async def upload_financial_report(file: UploadFile = File(...)):
         # 2. 【新增】构建 RAG 向量库
         # 这一步会用你的 4060 进行计算
         full_text = result.get("full_text", "")
+        print(f"📝 解析结果: 文本长度 = {len(full_text)} 字符")
         if full_text:
+            print("🚀 开始构建 RAG 向量库...")
             success = build_vector_store(full_text)
             if success:
                 print(">>> RAG 索引构建成功！")
             else:
                 print(">>> RAG 索引构建失败！")
+        else:
+            print("⚠️ 解析结果中没有 full_text 字段")
         
         # 为了前端显示清爽，我们把 full_text 从返回结果里去掉 (太大了，没必要传给前端)
         if "full_text" in result:
@@ -79,7 +83,7 @@ async def chat_with_report(request: ChatRequest):
     {request.question}
     """
     
-    answer = run_agent_query(full_query)
+    answer = run_agent_query(query=request.question, context=relevant_context)
     
     return {"answer": answer}
 
