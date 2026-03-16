@@ -121,12 +121,10 @@ with col2:
             ]
         }
         
-        # 渲染预设问题
         for category, questions in preset_questions.items():
             st.markdown(f"**{category}**")
-            cols = st.columns(2)
             for i, question in enumerate(questions):
-                col = cols[i % 2]
+                col = st.columns(2)[i % 2]
                 with col:
                     if st.button(f"📝 {question}", key=f"preset_{category}_{i}"):
                         st.session_state.pending_question = question
@@ -165,11 +163,10 @@ with col2:
                         
                         # 显示推荐问题
                         if "last_recommended" in st.session_state:
-                            st.markdown("---")
                             st.markdown("**💡 你可能还想问：**")
-                            cols = st.columns(2)
                             for i, q in enumerate(st.session_state.last_recommended):
-                                with cols[i % 2]:
+                                col = st.columns(2)[i % 2]
+                                with col:
                                     if st.button(f"📝 {q}", key=f"recommended_{i}"):
                                         st.session_state.pending_question = q
                             del st.session_state.last_recommended

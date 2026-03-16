@@ -4,21 +4,24 @@ from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
 from financial_report_ai_assistant.services.financial_calculator import (
-    calculate_growth_rate, calculate_margin, calculate_roe, format_percentage
+    calculate_growth_rate, calculate_margin, calculate_roe, format_percentage,
+    calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
+    calculate_eps, calculate_pe, calculate_turnover, calculate_inventory_turnover,
+    calculate_dividend_yield
 )
 
 load_dotenv()
 
-# 1. 定义 Tools
+# 1. 定义 Tools - 盈利能力
 @tool
 def tool_calculate_growth_rate(current: float, previous: float) -> str:
-    """计算增长率。输入本期数值和上期数值。"""
+    """计算同比增长率。输入本期数值和上期数值。"""
     res = calculate_growth_rate(current, previous)
     return format_percentage(res)
 
 @tool
 def tool_calculate_margin(profit: float, revenue: float) -> str:
-    """计算利润率。输入利润和营收。"""
+    """计算利润率（毛利率、净利率）。输入利润和营收。"""
     res = calculate_margin(profit, revenue)
     return format_percentage(res)
 
@@ -26,6 +29,69 @@ def tool_calculate_margin(profit: float, revenue: float) -> str:
 def tool_calculate_roe(net_income: float, equity: float) -> str:
     """计算净资产收益率 (ROE)。输入净利润和净资产。"""
     res = calculate_roe(net_income, equity)
+    return format_percentage(res)
+
+@tool
+def tool_calculate_eps(net_income: float, shares_outstanding: float) -> str:
+    """计算每股收益 (EPS)。输入净利润和总股本（万股或亿股）。"""
+    res = calculate_eps(net_income, shares_outstanding)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f} 元/股"
+
+@tool
+def tool_calculate_pe(price_per_share: float, eps: float) -> str:
+    """计算市盈率 (PE)。输入每股股价和每股收益。"""
+    res = calculate_pe(price_per_share, eps)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f} 倍"
+
+# 2. 定义 Tools - 偿债能力
+@tool
+def tool_calculate_debt_ratio(total_liabilities: float, total_assets: float) -> str:
+    """计算资产负债率。输入负债总额和资产总额。"""
+    res = calculate_debt_ratio(total_liabilities, total_assets)
+    return format_percentage(res)
+
+@tool
+def tool_calculate_current_ratio(current_assets: float, current_liabilities: float) -> str:
+    """计算流动比率。输入流动资产和流动负债。"""
+    res = calculate_current_ratio(current_assets, current_liabilities)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f}"
+
+@tool
+def tool_calculate_quick_ratio(current_assets: float, inventory: float, current_liabilities: float) -> str:
+    """计算速动比率。输入流动资产、存货和流动负债。"""
+    res = calculate_quick_ratio(current_assets, inventory, current_liabilities)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f}"
+
+# 3. 定义 Tools - 运营能力
+@tool
+def tool_calculate_turnover(revenue: float, total_assets: float) -> str:
+    """计算资产周转率。输入营业收入和总资产。"""
+    res = calculate_turnover(revenue, total_assets)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f} 次"
+
+@tool
+def tool_calculate_inventory_turnover(cogs: float, inventory: float) -> str:
+    """计算存货周转率。输入营业成本和存货金额。"""
+    res = calculate_inventory_turnover(cogs, inventory)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f} 次"
+
+# 4. 定义 Tools - 股息
+@tool
+def tool_calculate_dividend_yield(dividend_per_share: float, price_per_share: float) -> str:
+    """计算股息率。输入每股股息和每股股价。"""
+    res = calculate_dividend_yield(dividend_per_share, price_per_share)
     return format_percentage(res)
 
 # 2. Agent 构建
@@ -44,14 +110,36 @@ def create_financial_agent():
         temperature=0.1 # 计算任务需要低温度
     )
     
-    tools = [tool_calculate_growth_rate, tool_calculate_margin, tool_calculate_roe]
+    tools = [
+        # 盈利能力
+        tool_calculate_growth_rate,
+        tool_calculate_margin,
+        tool_calculate_roe,
+        tool_calculate_eps,
+        tool_calculate_pe,
+        # 偿债能力
+        tool_calculate_debt_ratio,
+        tool_calculate_current_ratio,
+        tool_calculate_quick_ratio,
+        # 运营能力
+        tool_calculate_turnover,
+        tool_calculate_inventory_turnover,
+        # 股息
+        tool_calculate_dividend_yield,
+    ]
     
     system_prompt = """你是一位专业的金融分析师。你的任务是根据用户提供的【背景信息】（通常来自财报检索）来回答问题。
     
     原则：
-    1. 如果问题涉及具体的财务指标计算（如增长率、利润率、ROE），你必须调用提供的工具进行精确计算，严禁自己估算。
+    1. 如果问题涉及具体的财务指标计算（如增长率、利润率、ROE、资产负债率等），你必须调用提供的工具进行精确计算，严禁自己估算。
     2. 如果背景信息中没有足够的数据支持计算或回答，请诚实告知用户。
     3. 回答要条理清晰，数据准确。
+    4. 当用户询问以下类型的指标时，必须使用对应的工具：
+       - 增长类：使用 tool_calculate_growth_rate
+       - 盈利类：使用 tool_calculate_margin、tool_calculate_roe、tool_calculate_eps、tool_calculate_pe
+       - 偿债类：使用 tool_calculate_debt_ratio、tool_calculate_current_ratio、tool_calculate_quick_ratio
+       - 运营类：使用 tool_calculate_turnover、tool_calculate_inventory_turnover
+       - 股息类：使用 tool_calculate_dividend_yield
     """
     
     # 使用 LangGraph 的 prebuilt agent
