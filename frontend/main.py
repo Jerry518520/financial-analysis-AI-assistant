@@ -75,22 +75,39 @@ with col2:
         st.divider()
         st.markdown("### 💬 对话 DeepSeek")
         
-        # 预设问题
-        preset_questions = [
-            "这份财报的营收是多少？",
-            "净利润同比增长了多少？",
-            "公司的毛利率是多少？",
-            "请生成一份财务摘要"
-        ]
+        # 预设问题（按分类）
+        preset_questions = {
+            "📊 基础数据": [
+                "这份财报的营收是多少？",
+                "净利润是多少？",
+                "公司总资产是多少？",
+            ],
+            "📈 盈利能力": [
+                "公司的毛利率是多少？",
+                "净利率是多少？",
+                "净资产收益率(ROE)是多少？",
+            ],
+            "📉 成长能力": [
+                "净利润同比增长了多少？",
+                "营收同比增长了多少？",
+            ],
+            "🔍 综合分析": [
+                "请生成一份财务摘要",
+                "公司的盈利能力强吗？",
+                "公司面临哪些主要风险？",
+            ]
+        }
         
-        st.markdown("#### 💡 常见问题")
-        cols = st.columns(2)
-        for i, question in enumerate(preset_questions):
-            col = cols[i % 2]
-            with col:
-                if st.button(f"📝 {question}", key=f"preset_{i}"):
-                    # 点击预设问题，添加到输入框
-                    st.session_state.pending_question = question
+        # 渲染预设问题
+        for category, questions in preset_questions.items():
+            st.markdown(f"**{category}**")
+            cols = st.columns(2)
+            for i, question in enumerate(questions):
+                col = cols[i % 2]
+                with col:
+                    if st.button(f"📝 {question}", key=f"preset_{category}_{i}"):
+                        st.session_state.pending_question = question
+            st.markdown("")
         
         # 聊天记录逻辑
         if "messages" not in st.session_state:
