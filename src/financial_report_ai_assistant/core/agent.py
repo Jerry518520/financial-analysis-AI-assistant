@@ -7,7 +7,8 @@ from financial_report_ai_assistant.services.financial_calculator import (
     calculate_growth_rate, calculate_margin, calculate_roe, format_percentage,
     calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
     calculate_eps, calculate_pe, calculate_turnover, calculate_inventory_turnover,
-    calculate_dividend_yield
+    calculate_dividend_yield, analyze_trend, analyze_yoy, compare_to_industry,
+    generate_chart_data, calculate_avg, calculate_max, calculate_min, calculate_variance
 )
 
 load_dotenv()
@@ -94,6 +95,59 @@ def tool_calculate_dividend_yield(dividend_per_share: float, price_per_share: fl
     res = calculate_dividend_yield(dividend_per_share, price_per_share)
     return format_percentage(res)
 
+# 5. 定义 Tools - 趋势分析
+@tool
+def tool_analyze_trend(values: list) -> str:
+    """分析多年趋势。输入多年数据列表，如 [100, 120, 150]。"""
+    res = analyze_trend(values)
+    return str(res)
+
+# 6. 定义 Tools - 同比分析
+@tool
+def tool_analyze_yoy(current: float, previous: float) -> str:
+    """进行同比分析。输入本期数值和上期数值。"""
+    res = analyze_yoy(current, previous)
+    return str(res)
+
+# 7. 定义 Tools - 行业对比
+@tool
+def tool_compare_to_industry(value: float, industry_avg: float) -> str:
+    """与行业平均对比。输入公司数值和行业平均值。"""
+    res = compare_to_industry(value, industry_avg)
+    return str(res)
+
+# 8. 定义 Tools - 图表数据生成
+@tool
+def tool_generate_chart_data(years: list, values: list, metric_name: str = "指标") -> str:
+    """生成图表数据。输入年份列表和数值列表，如 years=[2021,2022,2023], values=[100,120,150]。"""
+    res = generate_chart_data(years, values, metric_name)
+    return str(res)
+
+# 9. 定义 Tools - 统计计算
+@tool
+def tool_calculate_avg(values: list) -> str:
+    """计算平均值。输入数值列表。"""
+    res = calculate_avg(values)
+    return str(res)
+
+@tool
+def tool_calculate_max(values: list) -> str:
+    """计算最大值。输入数值列表。"""
+    res = calculate_max(values)
+    return str(res)
+
+@tool
+def tool_calculate_min(values: list) -> str:
+    """计算最小值。输入数值列表。"""
+    res = calculate_min(values)
+    return str(res)
+
+@tool
+def tool_calculate_variance(values: list) -> str:
+    """计算方差（衡量波动性）。输入数值列表。"""
+    res = calculate_variance(values)
+    return str(res)
+
 # 2. Agent 构建
 def create_financial_agent():
     api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -126,6 +180,18 @@ def create_financial_agent():
         tool_calculate_inventory_turnover,
         # 股息
         tool_calculate_dividend_yield,
+        # 趋势分析
+        tool_analyze_trend,
+        tool_analyze_yoy,
+        # 行业对比
+        tool_compare_to_industry,
+        # 图表数据
+        tool_generate_chart_data,
+        # 统计分析
+        tool_calculate_avg,
+        tool_calculate_max,
+        tool_calculate_min,
+        tool_calculate_variance,
     ]
     
     system_prompt = """你是一位专业的金融分析师。你的任务是根据用户提供的【背景信息】（通常来自财报检索）来回答问题。
