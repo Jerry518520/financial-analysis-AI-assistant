@@ -22,7 +22,7 @@ def build_vector_store(full_text: str):
 
     try:
         embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
+            model_name="BAAI/bge-m3",
             model_kwargs={'device': device}
         )
 
@@ -58,7 +58,7 @@ def load_vector_store():
         print(f"♻️ 发现本地向量索引，正在加载 (Device: {device})...")
         try:
             embeddings = HuggingFaceEmbeddings(
-                model_name="all-MiniLM-L6-v2",
+                model_name="BAAI/bge-m3",
                 model_kwargs={'device': device}
             )
             # allow_dangerous_deserialization=True is needed for recent langchain versions if loading pickle
