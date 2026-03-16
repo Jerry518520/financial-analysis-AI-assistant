@@ -4,8 +4,31 @@ import requests
 import pandas as pd
 import os
 
-# 获取 API 地址，默认是 localhost，在 Docker 中会被覆盖为 http://backend:8000
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+
+def get_recommended_questions(user_question):
+    """根据用户问题推荐相关问题"""
+    question_lower = user_question.lower()
+    
+    recommendations = {
+        "营收": ["净利润是多少？", "毛利率是多少？", "营收同比增长多少？"],
+        "收入": ["净利润是多少？", "毛利率是多少？", "营收同比增长多少？"],
+        "净利润": ["毛利率是多少？", "ROE是多少？", "净利润同比增长多少？"],
+        "利润": ["毛利率是多少？", "ROE是多少？", "净利率是多少？"],
+        "毛利率": ["净利率是多少？", "ROE是多少？", "公司的盈利能力强吗？"],
+        "资产": ["负债是多少？", "资产负债率是多少？", "现金流是多少？"],
+        "负债": ["资产负债率是多少？", "公司的偿债能力如何？"],
+        "风险": ["经营风险有哪些？", "财务风险有哪些？", "公司面临哪些主要风险？"],
+        "增长": ["净利润同比增长多少？", "营收同比增长多少？", "公司的发展能力如何？"],
+        "摘要": ["公司的盈利能力强吗？", "公司面临哪些主要风险？", "未来发展前景如何？"],
+    }
+    
+    for key, questions in recommendations.items():
+        if key in question_lower:
+            return questions
+    
+    return ["公司的盈利能力强吗？", "毛利率是多少？", "净利润同比增长多少？"]
+
 
 st.set_page_config(page_title="洞察者 AI", page_icon="🤖", layout="wide")
 
@@ -130,11 +153,26 @@ with col2:
                         
                         if res.status_code == 200:
                             ai_msg = res.json().get("answer", "错误")
+                            # 根据用户问题推荐相关问题
+                            recommended_questions = get_recommended_questions(prompt)
+                            if recommended_questions:
+                                st.session_state.last_recommended = recommended_questions
                         else:
                             ai_msg = "服务器错误"
                             
                         st.markdown(ai_msg)
                         st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+                        
+                        # 显示推荐问题
+                        if "last_recommended" in st.session_state:
+                            st.markdown("---")
+                            st.markdown("**💡 你可能还想问：**")
+                            cols = st.columns(2)
+                            for i, q in enumerate(st.session_state.last_recommended):
+                                with cols[i % 2]:
+                                    if st.button(f"📝 {q}", key=f"recommended_{i}"):
+                                        st.session_state.pending_question = q
+                            del st.session_state.last_recommended
                     except Exception as e:
                         st.error(f"网络错误: {e}")
         
