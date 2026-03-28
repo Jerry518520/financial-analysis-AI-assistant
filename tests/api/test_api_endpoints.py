@@ -37,7 +37,10 @@ def client():
         mock_llm.__truediv__ = MagicMock(return_value=mock_llm_instance)
         mock_llm.__or__ = MagicMock(return_value=mock_llm_instance)
 
-        from financial_report_ai_assistant.api.main import app
+        from financial_report_ai_assistant.api.main import app, CURRENT_PDF_PATH
+        # 重置 PDF 路径，避免测试间污染
+        import financial_report_ai_assistant.api.main as main_mod
+        main_mod.CURRENT_PDF_PATH = None
         client = TestClient(app)
         yield client
 
@@ -148,76 +151,34 @@ class TestHighlight:
         assert "PDF" in resp.json()["error"]
 
     def test_highlight_after_upload(self, client, sample_pdf):
-        """上传 PDF 后应能正常渲染"""
-        # 先上传
+        """上传 PDF 后调用 highlight 端点"""
+        # 先上传让 PDF 路径被记录
         client.post("/upload", files={"file": ("test.pdf", sample_pdf, "application/pdf")})
-        # 再请求高亮
-        with patch("financial_report_ai_assistant.api.main.fitz") as mock_fitz, \
-             patch("financial_report_ai_assistant.api.main.Image") as mock_image, \
-             patch("financial_report_ai_assistant.api.main.ImageDraw") as mock_draw:
 
-            # mock fitz 文档
-            mock_doc = MagicMock()
-            mock_fitz.open.return_value = mock_doc
-            mock_doc.__len__.return_value = 5
-            mock_doc.__getitem__ = MagicMock()
+        # highlight 端点需要 PyMuPDF(fitz) + PIL 来渲染 PDF
+        # 这属于集成测试，在无 GUI 的 CI 环境中跳过
+        try:
+            import fitz  # noqa: F401
+            import PIL  # noqa: F401
+        except ImportError:
+            pytest.skip("需要 PyMuPDF 和 PIL 才能运行 highlight 测试")
 
-            # mock 图片渲染
-            mock_pix = MagicMock()
-            mock_pix.tobytes.return_value = b"fake_png_data"
-            mock_page = MagicMock()
-            mock_page.get_pixmap.return_value = mock_pix
-            mock_doc.__getitem__ = lambda self, idx: mock_page if idx == 0 else mock_page
-
-            # mock PIL Image
-            mock_img = MagicMock()
-            mock_image.open.return_value = mock_img
-            mock_draw.Draw.return_value = MagicMock()
-
-            mock_output = MagicMock()
-            mock_output.getvalue.return_value = b"fake_png_data"
-            mock_img.save = MagicMock()
-
-            import io
-            with patch("io.BytesIO", return_value=mock_output):
-                resp = client.get("/highlight", params={"page": 1})
-
-        # PDF 存在时可能返回 PNG 或错误，取决于 mock 是否完善
-        # 至少不应返回 404
+        resp = client.get("/highlight", params={"page": 1})
         assert resp.status_code != 404
 
     def test_page_out_of_range(self, client, sample_pdf):
         """页码超出范围时应有合理处理"""
         client.post("/upload", files={"file": ("test.pdf", sample_pdf, "application/pdf")})
-        with patch("financial_report_ai_assistant.api.main.fitz") as mock_fitz:
-            mock_doc = MagicMock()
-            mock_fitz.open.return_value = mock_doc
-            mock_doc.__len__.return_value = 3
-            mock_page = MagicMock()
-            mock_pix = MagicMock()
-            mock_pix.tobytes.return_value = b"png"
-            mock_page.get_pixmap.return_value = mock_pix
 
-            def get_item(idx):
-                if idx >= 3:
-                    idx = 2  # 超出范围时取最后一页
-                return mock_page
-            mock_doc.__getitem__ = lambda self, idx: get_item(idx)
+        try:
+            import fitz  # noqa: F401
+            import PIL  # noqa: F401
+        except ImportError:
+            pytest.skip("需要 PyMuPDF 和 PIL 才能运行 highlight 测试")
 
-            with patch("financial_report_ai_assistant.api.main.Image") as mock_image, \
-                 patch("financial_report_ai_assistant.api.main.ImageDraw"):
-                mock_img = MagicMock()
-                mock_image.open.return_value = mock_img
-                mock_output = MagicMock()
-                mock_output.getvalue.return_value = b"png"
-                mock_img.save = MagicMock()
-
-                import io
-                with patch("io.BytesIO", return_value=mock_output):
-                    resp = client.get("/highlight", params={"page": 999})
-
-            # 不应崩溃
-            assert resp.status_code in [200, 404, 500]
+        resp = client.get("/highlight", params={"page": 999})
+        # 代码会将越界页码修正到最后页
+        assert resp.status_code == 200
 
 
 # ============================================================

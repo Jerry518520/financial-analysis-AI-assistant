@@ -92,11 +92,11 @@ class TestSplitByPage:
 
     def test_page_num_map_updated(self):
         """PAGE_NUM_MAP 应被正确更新"""
-        from financial_report_ai_assistant.services.rag_service import _split_by_page, PAGE_NUM_MAP
+        import financial_report_ai_assistant.services.rag_service as rag_module
         text = "--- Page 1 ---\n内容A\n--- Page 2 ---\n内容B"
-        _split_by_page(text)
-        assert PAGE_NUM_MAP[0] == 1
-        assert PAGE_NUM_MAP[1] == 2
+        rag_module._split_by_page(text)
+        assert rag_module.PAGE_NUM_MAP[0] == 1
+        assert rag_module.PAGE_NUM_MAP[1] == 2
 
 
 # ============================================================
@@ -104,25 +104,28 @@ class TestSplitByPage:
 # ============================================================
 class TestRebuildPageNumMap:
     def test_normal_rebuild(self):
-        from financial_report_ai_assistant.services.rag_service import _rebuild_page_num_map, PAGE_NUM_MAP
+        import financial_report_ai_assistant.services.rag_service as rag_module
+        rag_module.PAGE_NUM_MAP = {}
         text = "--- Page 1 ---\n内容\n--- Page 2 ---\n内容\n--- Page 3 ---\n内容"
-        _rebuild_page_num_map(text)
-        assert len(PAGE_NUM_MAP) == 3
-        assert PAGE_NUM_MAP[0] == 1
-        assert PAGE_NUM_MAP[2] == 3
+        rag_module._rebuild_page_num_map(text)
+        assert len(rag_module.PAGE_NUM_MAP) == 3
+        assert rag_module.PAGE_NUM_MAP[0] == 1
+        assert rag_module.PAGE_NUM_MAP[2] == 3
 
     def test_empty_text(self):
-        from financial_report_ai_assistant.services.rag_service import _rebuild_page_num_map, PAGE_NUM_MAP
-        _rebuild_page_num_map("")
-        assert len(PAGE_NUM_MAP) == 0
+        import financial_report_ai_assistant.services.rag_service as rag_module
+        rag_module.PAGE_NUM_MAP = {0: 1, 1: 2}  # 先污染，再验证重建清空
+        rag_module._rebuild_page_num_map("")
+        assert len(rag_module.PAGE_NUM_MAP) == 0
 
     def test_skips_empty_pages(self):
-        from financial_report_ai_assistant.services.rag_service import _rebuild_page_num_map, PAGE_NUM_MAP
+        import financial_report_ai_assistant.services.rag_service as rag_module
+        rag_module.PAGE_NUM_MAP = {}
         text = "--- Page 1 ---\n内容\n--- Page 2 ---\n\n--- Page 3 ---\n内容"
-        _rebuild_page_num_map(text)
-        assert len(PAGE_NUM_MAP) == 2
-        assert PAGE_NUM_MAP[0] == 1
-        assert PAGE_NUM_MAP[1] == 3
+        rag_module._rebuild_page_num_map(text)
+        assert len(rag_module.PAGE_NUM_MAP) == 2
+        assert rag_module.PAGE_NUM_MAP[0] == 1
+        assert rag_module.PAGE_NUM_MAP[1] == 3
 
 
 # ============================================================
@@ -158,11 +161,13 @@ class TestPreviewChunks:
         assert len(chunks) == 0
 
     def test_custom_max_chars(self):
+        """preview_chunks 不直接控制切块大小，切块大小由 _split_by_page 的 max_chars_per_chunk 控制"""
         from financial_report_ai_assistant.services.rag_service import preview_chunks
         large_content = "A" * 1000
         text = f"--- Page 1 ---\n{large_content}"
         chunks = preview_chunks(text, max_chars=100)
-        assert len(chunks) > 1
+        # 1000字符 < 3000(max_chars_per_chunk)，不会分块，但会截断预览显示
+        assert len(chunks) == 1
 
 
 # ============================================================
