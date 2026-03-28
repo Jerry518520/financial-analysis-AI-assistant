@@ -33,11 +33,12 @@ RUN pip install --no-cache-dir poetry==${POETRY_VERSION} -i https://mirrors.aliy
 # 复制依赖定义文件
 COPY pyproject.toml poetry.lock* ./
 
-# 安装依赖 (不安装 dev 依赖，不安装当前项目本身作为包)
-RUN poetry install --no-root --only main --no-interaction --no-ansi
+# 安装依赖 (包含生产依赖和测试依赖)
+RUN poetry install --no-root --no-interaction --no-ansi
 
-# 复制项目代码
+# 复制项目代码和测试代码
 COPY src/ ./src/
+COPY tests/ ./tests/
 COPY frontend/ ./frontend/
 
 # 创建必要的缓存目录
