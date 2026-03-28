@@ -144,7 +144,7 @@ with col2:
                 "资产周转率是多少？",
                 "存货周转率是多少？",
             ],
-            "� 综合分析": [
+            "🔍 综合分析": [
                 "请生成一份财务摘要",
                 "公司的盈利能力强吗？",
                 "公司面临哪些主要风险？",
@@ -154,10 +154,11 @@ with col2:
         
         for category, questions in preset_questions.items():
             st.markdown(f"**{category}**")
+            category_key = category.split()[1] if len(category.split()) > 1 else category
             for i, question in enumerate(questions):
                 col = st.columns(2)[i % 2]
                 with col:
-                    if st.button(f"📝 {question}", key=f"preset_{category}_{i}"):
+                    if st.button(f"📝 {question}", key=f"preset_{category_key}_{i}"):
                         st.session_state.pending_question = question
             st.markdown("")
         
@@ -182,15 +183,20 @@ with col2:
                         
                         if res.status_code == 200:
                             ai_msg = res.json().get("answer", "错误")
-                            # 根据用户问题推荐相关问题
+                            source_page = res.json().get("source_page", 1)
+                            st.session_state.last_source_page = source_page
                             recommended_questions = get_recommended_questions(prompt)
                             if recommended_questions:
                                 st.session_state.last_recommended = recommended_questions
                         else:
                             ai_msg = "服务器错误"
-                            
+
                         st.markdown(ai_msg)
                         st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+
+                        if st.session_state.get("last_source_page"):
+                            page = st.session_state.last_source_page
+                            st.image(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", caption=f"📄 来源：第 {page} 页")
                         
                         # 显示推荐问题
                         if "last_recommended" in st.session_state:
@@ -222,11 +228,29 @@ with col2:
                         
                         if res.status_code == 200:
                             ai_msg = res.json().get("answer", "错误")
+                            source_page = res.json().get("source_page", 1)
+                            st.session_state.last_source_page = source_page
+                            recommended_questions = get_recommended_questions(prompt)
+                            if recommended_questions:
+                                st.session_state.last_recommended = recommended_questions
                         else:
                             ai_msg = "服务器错误"
-                            
+
                         st.markdown(ai_msg)
                         st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+
+                        if st.session_state.get("last_source_page"):
+                            page = st.session_state.last_source_page
+                            st.image(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", caption=f"📄 来源：第 {page} 页")
+
+                        if "last_recommended" in st.session_state:
+                            st.markdown("**💡 你可能还想问：**")
+                            for i, q in enumerate(st.session_state.last_recommended):
+                                col = st.columns(2)[i % 2]
+                                with col:
+                                    if st.button(f"📝 {q}", key=f"chat_recommended_{i}"):
+                                        st.session_state.pending_question = q
+                            del st.session_state.last_recommended
                     except Exception as e:
                         st.error(f"网络错误: {e}")
     else:

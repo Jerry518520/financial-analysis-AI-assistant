@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import ToolExecutor, ToolInvocation
+from langgraph.prebuilt import ToolNode
 from typing import TypedDict, List, Optional, Union, Annotated
 import operator
 import os
@@ -233,7 +233,7 @@ def executor_node(state: AgentState):
         return {"tool_results": ["错误：API Key 未配置"]}
     
     tools = get_tools()
-    tool_executor = ToolExecutor(tools)
+    tool_node = ToolNode(tools)
     
     current_plan = state.get("plan", [])
     previous_results = state.get("tool_results", [])
@@ -280,11 +280,7 @@ def executor_node(state: AgentState):
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("args", {})
             
-            invocation = ToolInvocation(
-                tool=tool_name,
-                tool_input=tool_args
-            )
-            result = tool_executor.invoke(invocation)
+            result = tool_node.invoke({"tool": tool_name, "tool_input": tool_args})
             
             return {
                 "tool_calls": [f"{tool_name}({tool_args})"],
@@ -332,7 +328,14 @@ def reflection_node(state: AgentState):
     response = llm.invoke(reflection_prompt)
     reflection = response.content.strip()
     
-    should_continue = "FINISH" not in reflection and iteration < MAX_ITERATIONS
+    # 修复：明确处理 CONTINUE/RETRY/其他情况
+    if "FINISH" in reflection or "RETRY" in reflection:
+        should_continue = False
+    elif "CONTINUE" in reflection and iteration < MAX_ITERATIONS:
+        should_continue = True
+    else:
+        # 其他情况：达到迭代上限或无法判断，都停止
+        should_continue = False
     
     return {"reflection": reflection, "should_continue": should_continue}
 
