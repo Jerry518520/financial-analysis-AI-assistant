@@ -166,6 +166,11 @@ with col2:
         if "messages" not in st.session_state:
             st.session_state.messages = []
         
+        # 先渲染历史消息（只渲染一次）
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+        
         # 处理预设问题
         if "pending_question" in st.session_state:
             prompt = st.session_state.pending_question
@@ -194,9 +199,13 @@ with col2:
                         st.markdown(ai_msg)
                         st.session_state.messages.append({"role": "assistant", "content": ai_msg})
 
+                        # 显示溯源图片
                         if st.session_state.get("last_source_page"):
                             page = st.session_state.last_source_page
-                            st.image(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", caption=f"📄 来源：第 {page} 页")
+                            try:
+                                st.image(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", caption=f"📄 来源：第 {page} 页")
+                            except Exception as img_err:
+                                st.warning(f"图片加载失败: {img_err}")
                         
                         # 显示推荐问题
                         if "last_recommended" in st.session_state:
@@ -209,12 +218,8 @@ with col2:
                             del st.session_state.last_recommended
                     except Exception as e:
                         st.error(f"网络错误: {e}")
-        
-        # 正常输入
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
 
+        # 正常输入
         if prompt := st.chat_input("请输入问题..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
@@ -239,9 +244,13 @@ with col2:
                         st.markdown(ai_msg)
                         st.session_state.messages.append({"role": "assistant", "content": ai_msg})
 
+                        # 显示溯源图片
                         if st.session_state.get("last_source_page"):
                             page = st.session_state.last_source_page
-                            st.image(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", caption=f"📄 来源：第 {page} 页")
+                            try:
+                                st.image(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", caption=f"📄 来源：第 {page} 页")
+                            except Exception as img_err:
+                                st.warning(f"图片加载失败: {img_err}")
 
                         if "last_recommended" in st.session_state:
                             st.markdown("**💡 你可能还想问：**")
