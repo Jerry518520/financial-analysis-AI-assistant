@@ -15,6 +15,49 @@ if not os.path.exists(CACHE_DIR):
 # 为了防止 LlamaParse 处理过多页面导致超时或消耗过多额度，设置一个软上限
 MAX_LLAMA_PAGES = 20 
 
+# LlamaParse 支持的语言代码
+LLAMA_LANG_MAP = {
+    "chinese": "ch_sim",    # 简体中文
+    "english": "en",        # 英文
+    "japanese": "ja",       # 日文
+    "korean": "ko",         # 韩文
+}
+
+def _detect_language(doc, sample_pages: int = 5) -> str:
+    """
+    从 PDF 前几页采样文本，检测主要语言。
+    返回 LlamaParse 支持的 language 代码。
+    """
+    import unicodedata
+    
+    cjk_chars = 0   # 中日韩字符数
+    latin_chars = 0 # 拉丁字符数
+    total_chars = 0
+    
+    for i in range(min(sample_pages, len(doc))):
+        text = doc[i].get_text()
+        for ch in text:
+            if unicodedata.category(ch).startswith("C"):
+                continue  # 跳过控制字符、空格等
+            total_chars += 1
+            # CJK Unified Ideographs 范围
+            if '\u4e00' <= ch <= '\u9fff' or '\u3400' <= ch <= '\u4dbf':
+                cjk_chars += 1
+            elif ch.isascii() and ch.isalpha():
+                latin_chars += 1
+    
+    if total_chars == 0:
+        return "en"  # 无法检测时默认英文
+    
+    cjk_ratio = cjk_chars / total_chars
+    latin_ratio = latin_chars / total_chars
+    
+    # 如果 CJK 字符占比 > 20%，认为是中文（大部分财报的场景）
+    if cjk_ratio > 0.2:
+        return LLAMA_LANG_MAP["chinese"]
+    
+    return LLAMA_LANG_MAP["english"]
+
 def _is_suspected_table_page(page) -> bool:
     """
     使用启发式规则判断页面是否可能包含无边框表格。
@@ -134,8 +177,11 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
             api_key = os.getenv("LLAMA_CLOUD_API_KEY")
             if not api_key: return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
             
-            # 针对中文财报优化，使用 zh 语言代码
-            parser = LlamaParse(result_type="markdown", premium_mode=True, language="zh")
+            # 自动检测文档语言
+            detected_lang = _detect_language(doc)
+            print(f"🌍 检测到文档语言: {detected_lang}，使用对应 LlamaParse 配置")
+            
+            parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
             documents = parser.load_data(subset_filename)
             
             # 映射回原始页码
