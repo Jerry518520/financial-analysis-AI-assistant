@@ -3,6 +3,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import os
+import re
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
@@ -45,6 +46,19 @@ h2, h3 {
 /* ===== 正文文字 ===== */
 p, span, div, li, td, th {
     color: #cbd5e1 !important;
+}
+
+/* ===== 聊天气泡内文字强制可见 ===== */
+[data-testid="stChatMessage"] p,
+[data-testid="stChatMessage"] span,
+[data-testid="stChatMessage"] li,
+[data-testid="stChatMessage"] div,
+[data-testid="stChatMessage"] td,
+[data-testid="stChatMessage"] th,
+[data-testid="stChatMessage"] strong,
+[data-testid="stChatMessage"] code,
+[data-testid="stChatMessage"] pre {
+    color: #e2e8f0 !important;
 }
 
 /* ===== Streamlit 原生组件样式覆盖 ===== */
@@ -246,6 +260,24 @@ hr, [data-testid="stDivider"] {
 
 
 # ============================================================
+# 自动滚动到最新消息（选择预选问题后不再需要手动滚动）
+# ============================================================
+st.markdown("""
+<script>
+function scrollToBottom() {
+    const chatContainer = window.parent.document.querySelector('[data-testid="stChatMessageContainer"]');
+    if (chatContainer) {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+}
+// 页面加载完成后延迟滚动（等待 Streamlit 渲染完毕）
+setTimeout(scrollToBottom, 300);
+setTimeout(scrollToBottom, 800);
+</script>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
 # 业务逻辑函数（不变）
 # ============================================================
 
@@ -313,8 +345,19 @@ def call_chat_api(prompt):
         return f"❌ 服务器错误：{error_detail}", [], None
 
 
+def _clean_ai_message(text):
+    """清理 AI 输出中的 HTML 标签残留（如 <br>、<br/>、<p> 等）"""
+    # 将 <br>、<br/>、<br /> 替换为换行符
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    # 将 </p>、<p> 替换为换行符（保留内容）
+    text = re.sub(r'</?p>', '\n', text)
+    # 移除其他残留 HTML 标签
+    text = re.sub(r'<[^>]+>', '', text)
+    return text
+
+
 def _render_source_images(source_pages, btn_key):
-    """渲染溯源按钮，点击后展开来源页图片（支持多页）"""
+    """渲染溯源按钮，点击后展开来源页图片（支持多页），展开后可收起"""
     if not source_pages:
         return
 
@@ -324,12 +367,13 @@ def _render_source_images(source_pages, btn_key):
         pages_str = "、".join(str(p) for p in source_pages)
         label = f"📄 查看来源（第 {pages_str} 页）"
 
-    if st.button(label, key=btn_key):
-        # 点击时用 rerun 展开
-        st.session_state["_expanded_source"] = btn_key
+    is_expanded = st.session_state.get("_expanded_source") == btn_key
 
-    # 仅当用户点击了当前按钮时展开图片
-    if st.session_state.get("_expanded_source") == btn_key:
+    if is_expanded:
+        # 已展开：显示"收起"按钮
+        if st.button("🔼 收起来源", key=f"{btn_key}_close", use_container_width=True):
+            st.session_state.pop("_expanded_source", None)
+            st.rerun()
         for page in source_pages:
             try:
                 st.image(
@@ -338,6 +382,11 @@ def _render_source_images(source_pages, btn_key):
                 )
             except Exception:
                 st.caption(f"⚠️ 第 {page} 页溯源图片加载失败")
+    else:
+        # 未展开：显示"查看来源"按钮
+        if st.button(label, key=btn_key):
+            st.session_state["_expanded_source"] = btn_key
+            st.rerun()
 
 
 def _render_recommended(rec_list, msg_idx):
@@ -364,8 +413,10 @@ def _process_chat(prompt):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("DeepSeek 正在思考..."):
+        with st.spinner("🧠 DeepSeek 正在思考..."):
             ai_msg, source_pages, recommended = call_chat_api(prompt)
+            # 清理 AI 输出中残留的 HTML 标签（如 <br>）
+            ai_msg = _clean_ai_message(ai_msg)
             st.markdown(ai_msg)
             msg_idx = len(st.session_state.messages)
             st.session_state.messages.append({
@@ -428,26 +479,31 @@ if 'result' not in st.session_state:
 
         if uploaded_file is not None:
             if st.button("🚀 开始解析", type="primary", use_container_width=True):
-                with st.spinner("正在提取数据..."):
-                    try:
-                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                        resp = requests.post(f"{API_URL}/upload", files=files)
-                        if resp.status_code == 200:
-                            st.session_state.result = resp.json()
-                            st.session_state.messages = []
-                            st.session_state.summary = None
-                            if "pending_question" in st.session_state:
-                                del st.session_state.pending_question
-                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                            st.rerun()
-                        else:
-                            try:
-                                err = resp.json().get("error", "未知错误")
-                            except Exception:
-                                err = f"HTTP {resp.status_code}"
-                            st.error(f"解析失败：{err}")
-                    except Exception as e:
-                        st.error(f"连接错误: {e}")
+                progress = st.progress(0, text="📤 正在上传文件...")
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                    progress.progress(30, text="🔍 正在解析 PDF 文本...")
+                    resp = requests.post(f"{API_URL}/upload", files=files)
+                    progress.progress(70, text="🧠 正在构建 RAG 向量库...")
+                    if resp.status_code == 200:
+                        progress.progress(100, text="✅ 解析完成！")
+                        st.session_state.result = resp.json()
+                        st.session_state.messages = []
+                        st.session_state.summary = None
+                        if "pending_question" in st.session_state:
+                            del st.session_state.pending_question
+                        st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
+                        st.rerun()
+                    else:
+                        progress.empty()
+                        try:
+                            err = resp.json().get("error", "未知错误")
+                        except Exception:
+                            err = f"HTTP {resp.status_code}"
+                        st.error(f"解析失败：{err}")
+                except Exception as e:
+                    progress.empty()
+                    st.error(f"连接错误: {e}")
 
     with col2:
         st.markdown("""
@@ -478,26 +534,31 @@ else:
 
         if uploaded_file is not None:
             if st.button("🚀 重新解析", type="primary", use_container_width=True):
-                with st.spinner("正在提取数据..."):
-                    try:
-                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                        resp = requests.post(f"{API_URL}/upload", files=files)
-                        if resp.status_code == 200:
-                            st.session_state.result = resp.json()
-                            st.session_state.messages = []
-                            st.session_state.summary = None
-                            if "pending_question" in st.session_state:
-                                del st.session_state.pending_question
-                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                            st.rerun()
-                        else:
-                            try:
-                                err = resp.json().get("error", "未知错误")
-                            except Exception:
-                                err = f"HTTP {resp.status_code}"
-                            st.error(f"解析失败：{err}")
-                    except Exception as e:
-                        st.error(f"连接错误: {e}")
+                progress = st.progress(0, text="📤 正在上传文件...")
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                    progress.progress(30, text="🔍 正在解析 PDF 文本...")
+                    resp = requests.post(f"{API_URL}/upload", files=files)
+                    progress.progress(70, text="🧠 正在构建 RAG 向量库...")
+                    if resp.status_code == 200:
+                        progress.progress(100, text="✅ 解析完成！")
+                        st.session_state.result = resp.json()
+                        st.session_state.messages = []
+                        st.session_state.summary = None
+                        if "pending_question" in st.session_state:
+                            del st.session_state.pending_question
+                        st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
+                        st.rerun()
+                    else:
+                        progress.empty()
+                        try:
+                            err = resp.json().get("error", "未知错误")
+                        except Exception:
+                            err = f"HTTP {resp.status_code}"
+                        st.error(f"解析失败：{err}")
+                except Exception as e:
+                    progress.empty()
+                    st.error(f"连接错误: {e}")
 
     with col2:
         data = st.session_state.result.get("analysis_result", {})
@@ -523,15 +584,19 @@ else:
             st.session_state.summary = None
 
         if st.button("✨ 生成核心摘要", use_container_width=True):
-            with st.spinner("正在综合全篇财报生成摘要，请稍候..."):
-                try:
-                    res = requests.post(f"{API_URL}/analyze/summary", json={"focus": "general"})
-                    if res.status_code == 200:
-                        st.session_state.summary = res.json().get("summary", "生成失败")
-                    else:
-                        st.error(f"生成失败: {res.status_code}")
-                except Exception as e:
-                    st.error(f"请求错误: {e}")
+            progress = st.progress(0, text="🔍 正在检索财报关键信息...")
+            try:
+                res = requests.post(f"{API_URL}/analyze/summary", json={"focus": "general"})
+                progress.progress(50, text="🧠 AI 正在综合分析...")
+                if res.status_code == 200:
+                    progress.progress(100, text="✅ 摘要生成完成！")
+                    st.session_state.summary = res.json().get("summary", "生成失败")
+                else:
+                    progress.empty()
+                    st.error(f"生成失败: {res.status_code}")
+            except Exception as e:
+                progress.empty()
+                st.error(f"请求错误: {e}")
 
         if st.session_state.summary:
             st.markdown(f"""
@@ -603,16 +668,15 @@ else:
         is_processing = "pending_question" in st.session_state
         for idx, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+                # 清理历史消息中的 HTML 残留
+                content = _clean_ai_message(msg["content"]) if msg["role"] == "assistant" else msg["content"]
+                st.markdown(content)
                 if msg["role"] == "assistant":
+                    btn_key = msg.get("source_btn_key", f"source_hist_{idx}")
+                    _render_source_images(msg.get("source_pages", []), btn_key)
                     # 回答进行中时，隐藏所有历史消息的推荐按钮（避免重复显示）
                     if not is_processing:
-                        btn_key = msg.get("source_btn_key", f"source_hist_{idx}")
-                        _render_source_images(msg.get("source_pages", []), btn_key)
                         _render_recommended(msg.get("recommended"), idx)
-                    else:
-                        btn_key = msg.get("source_btn_key", f"source_hist_{idx}")
-                        _render_source_images(msg.get("source_pages", []), btn_key)
 
         # ========== 处理 pending_question ==========
         if "pending_question" in st.session_state:
