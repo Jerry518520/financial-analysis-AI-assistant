@@ -9,38 +9,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 
 # ============================================================
-# 1. _extract_page_num - 页码提取
-# ============================================================
-class TestExtractPageNum:
-    def test_normal_page(self):
-        from financial_report_ai_assistant.services.rag_service import _extract_page_num
-        assert _extract_page_num("--- Page 5 ---\n内容") == 5
-
-    def test_page_1(self):
-        from financial_report_ai_assistant.services.rag_service import _extract_page_num
-        assert _extract_page_num("--- Page 1 ---\n内容") == 1
-
-    def test_large_page_number(self):
-        from financial_report_ai_assistant.services.rag_service import _extract_page_num
-        assert _extract_page_num("--- Page 100 ---\n内容") == 100
-
-    def test_no_page_marker(self):
-        """没有页码标记时返回默认值 1"""
-        from financial_report_ai_assistant.services.rag_service import _extract_page_num
-        assert _extract_page_num("纯文本内容没有页码标记") == 1
-
-    def test_empty_string(self):
-        from financial_report_ai_assistant.services.rag_service import _extract_page_num
-        assert _extract_page_num("") == 1
-
-    def test_multiple_page_markers(self):
-        """多个页码标记时取第一个"""
-        from financial_report_ai_assistant.services.rag_service import _extract_page_num
-        assert _extract_page_num("--- Page 3 ---\n--- Page 5 ---") == 3
-
-
-# ============================================================
-# 2. _split_by_page - 按页切分文本
+# 1. _split_by_page - 按页切分文本
 # ============================================================
 class TestSplitByPage:
     def test_normal_split(self):

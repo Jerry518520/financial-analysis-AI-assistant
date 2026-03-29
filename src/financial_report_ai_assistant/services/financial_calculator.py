@@ -130,7 +130,8 @@ def analyze_trend(values: list) -> dict:
     if len(values) < 2:
         return {"趋势": "数据不足", "年均增长率": "需要至少2年数据"}
     
-    valid_values = [v for v in values if v is not None and v != 0]
+    # 只过滤 None，保留 0（0 是合法的财务数据，如某年利润为零）
+    valid_values = [v for v in values if v is not None]
     if len(valid_values) < 2:
         return {"趋势": "数据不足", "年均增长率": "有效数据不足"}
     
@@ -138,17 +139,29 @@ def analyze_trend(values: list) -> dict:
     last = valid_values[-1]
     years = len(valid_values) - 1
     
-    cagr = (last / first) ** (1 / years) - 1 if years > 0 else 0
+    # first 为 0 时 CAGR 无法计算（除零），用总变化量替代
+    if first == 0:
+        cagr = 0 if last == 0 else None
+    else:
+        cagr = (last / first) ** (1 / years) - 1 if years > 0 else 0
     
     trend_direction = "上升" if last > first else "下降" if last < first else "持平"
     
-    return {
+    result = {
         "首年数值": first,
         "末年数值": last,
         "趋势方向": trend_direction,
-        "年均增长率(CAGR)": round(cagr, 4),
-        "总变化幅度": round((last - first) / abs(first) * 100, 2) if first != 0 else 0
+        "总年数": years + 1,
     }
+    
+    if cagr is not None:
+        result["年均增长率(CAGR)"] = round(cagr, 4)
+    else:
+        result["年均增长率(CAGR)"] = "无法计算（首年数值为0）"
+    
+    result["总变化幅度"] = round((last - first) / abs(first) * 100, 2) if first != 0 else (round(last * 100, 2) if last != 0 else 0)
+    
+    return result
 
 def analyze_yoy(current: float, previous: float) -> dict:
     """

@@ -231,15 +231,20 @@ def _get_tool_map():
     return {tool.name: tool for tool in tools}
 
 def executor_node(state: AgentState):
-    """执行器：根据当前计划调用工具"""
+    """执行器：根据当前计划调用工具（支持批量调用多个工具）"""
     llm = create_llm()
     if not llm:
-        return {"tool_results": ["错误：API Key 未配置"]}
+        return {"tool_results": ["错误：API Key 未配置"], "should_continue": False}
 
     tool_map = _get_tool_map()
 
     current_plan = state.get("plan", [])
     previous_results = state.get("tool_results", [])
+    iteration = state.get("iteration", 0)
+
+    # 全局硬上限：超过 MAX_ITERATIONS 直接停止
+    if iteration >= MAX_ITERATIONS:
+        return {"should_continue": False}
 
     executor_prompt = f"""你是一位专业的金融分析师。根据用户的【问题】和【背景信息】，决定需要调用哪些工具来完成任务。
 
@@ -254,20 +259,20 @@ def executor_node(state: AgentState):
 【已完成的工具调用结果】：
 {chr(10).join(previous_results) if previous_results else "无"}
 
-请分析需要调用哪个工具来推进任务。每个工具调用需要提供：
+请分析需要调用哪些工具来推进任务。你可以一次调用多个工具。每个工具调用需要提供：
 1. 工具名称
 2. 工具参数（从背景信息中提取具体数值）
 
 可用的工具列表：
 {chr(10).join(f"- {name}: {tool.description}" for name, tool in tool_map.items())}
 
-如果需要调用工具，输出格式如下（JSON格式）：
-{{"name": "工具函数名", "args": {{"参数名": 参数值}}}}
+如果需要调用工具，输出JSON数组格式（可以包含多个调用）：
+[{{"name": "工具函数名", "args": {{"参数名": 参数值}}}}, ...]
 
 如果所有任务都已完成，或不需要再调用工具，请输出：
-{{"name": "FINISH", "args": {{}}}}
+[{{"name": "FINISH", "args": {{}}}}]
 
-只输出JSON，不要其他内容。
+只输出JSON数组，不要其他内容。
 """
 
     response = llm.invoke(executor_prompt)
@@ -276,32 +281,60 @@ def executor_node(state: AgentState):
     import json
     import re
 
+    new_calls = []
+    new_results = []
+
     try:
-        if "FINISH" in response_text:
+        # 先检查是否 FINISH
+        if "FINISH" in response_text and not re.search(r'\[[\s\S]*"name"[\s\S]*\]', response_text):
             return {"should_continue": False}
 
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
-        if json_match:
-            tool_call = json.loads(json_match.group())
+        # 尝试解析 JSON 数组
+        array_match = re.search(r'\[[\s\S]*\]', response_text)
+        if not array_match:
+            # 兜底：尝试解析单个 JSON 对象
+            array_match = re.search(r'\{[\s\S]*\}', response_text)
+            if array_match:
+                tool_calls_json = [json.loads(array_match.group())]
+            else:
+                return {"should_continue": False}
+        else:
+            tool_calls_json = json.loads(array_match.group())
+
+        for tool_call in tool_calls_json:
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("args", {})
 
+            if tool_name == "FINISH":
+                return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
+
             if tool_name not in tool_map:
-                return {"tool_results": [f"未知工具: {tool_name}"]}
+                new_results.append(f"未知工具: {tool_name}")
+                new_calls.append(f"未知工具: {tool_name}")
+                continue
 
-            # 直接调用 tool.invoke()，ToolNode 只能在 LangGraph 图内部自动使用
-            tool_func = tool_map[tool_name]
-            result = tool_func.invoke(tool_args)
+            try:
+                tool_func = tool_map[tool_name]
+                result = tool_func.invoke(tool_args)
+                new_results.append(str(result))
+                new_calls.append(f"{tool_name}({tool_args})")
+            except Exception as e:
+                new_results.append(f"工具 {tool_name} 执行出错: {str(e)}")
+                new_calls.append(f"{tool_name} 执行出错")
 
-            return {
-                "tool_calls": [f"{tool_name}({tool_args})"],
-                "tool_results": [str(result)],
-                "iteration": state.get("iteration", 0) + 1
-            }
     except Exception as e:
-        return {"tool_results": [f"执行出错: {str(e)}"]}
+        new_results.append(f"JSON 解析出错: {str(e)}，原始返回: {response_text[:200]}")
 
-    return {"should_continue": False}
+    # 如果没有成功调用任何工具，停止循环
+    if not new_calls:
+        return {"should_continue": False}
+
+    return {
+        "tool_calls": new_calls,
+        "tool_results": new_results,
+        "iteration": iteration + 1,
+        # 不在这里设置 should_continue，交给 reflection 决定
+    }
 
 def reflection_node(state: AgentState):
     """反思节点：检查工具返回结果是否合理"""
@@ -392,7 +425,9 @@ def answer_node(state: AgentState):
     return {"final_answer": response.content}
 
 def should_continue_edge(state: AgentState) -> str:
-    """判断是否继续循环"""
+    """判断是否继续循环（含全局硬上限保护）"""
+    if state.get("iteration", 0) >= MAX_ITERATIONS:
+        return "end"
     if state.get("should_continue", False):
         return "continue"
     return "end"
@@ -422,7 +457,8 @@ def build_agent_graph():
     
     workflow.add_edge("answer", END)
     
-    return workflow.compile()
+    # recursion_limit 设置为 MAX_ITERATIONS * 每轮步数(planner1 + executor1 + reflection1) + answer + 安全余量
+    return workflow.compile(checkpointer=None)
 
 _agent_graph = None
 
@@ -451,7 +487,7 @@ def run_agent_query(query: str, context: str = ""):
             "should_continue": True
         }
         
-        result = agent.invoke(initial_state)
+        result = agent.invoke(initial_state, {"recursion_limit": MAX_ITERATIONS * 4 + 10})
         return result.get("final_answer", "Agent 执行完成，但未生成回答。")
     
     except Exception as e:

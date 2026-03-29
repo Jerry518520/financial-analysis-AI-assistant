@@ -103,21 +103,21 @@ class TestExecutorNode:
     def test_finish_signal(self, mock_create_llm):
         """LLM 返回 FINISH 时应停止"""
         mock_llm = MagicMock()
-        mock_llm.invoke.return_value = _mock_llm_response('{"name": "FINISH", "args": {}}')
+        mock_llm.invoke.return_value = _mock_llm_response('[{"name": "FINISH", "args": {}}]')
         mock_create_llm.return_value = mock_llm
 
         from financial_report_ai_assistant.core.agent import executor_node
-        state = {"question": "测试", "context": "上下文", "plan": ["任务1"], "tool_results": []}
+        state = {"question": "测试", "context": "上下文", "plan": ["任务1"], "tool_results": [], "iteration": 0}
         result = executor_node(state)
 
         assert result["should_continue"] is False
 
     @patch("financial_report_ai_assistant.core.agent.create_llm")
-    def test_tool_execution(self, mock_create_llm):
-        """LLM 返回工具调用时，因 ToolNode 依赖 langchain 环境变量，可能进入异常分支"""
+    def test_tool_execution_single(self, mock_create_llm):
+        """LLM 返回单个工具调用（数组格式）"""
         mock_llm = MagicMock()
         mock_llm.invoke.return_value = _mock_llm_response(
-            '{"name": "tool_calculate_growth_rate", "args": {"current": 1200, "previous": 1000}}'
+            '[{"name": "tool_calculate_growth_rate", "args": {"current": 1200, "previous": 1000}}]'
         )
         mock_create_llm.return_value = mock_llm
 
@@ -126,24 +126,89 @@ class TestExecutorNode:
             "question": "计算增长率",
             "context": "上下文",
             "plan": ["计算增长率"],
-            "tool_results": []
+            "tool_results": [],
+            "iteration": 0
         }
         result = executor_node(state)
 
-        # ToolNode 需要 langchain config，在测试环境中可能进入异常分支
         assert "tool_results" in result
         assert len(result["tool_results"]) > 0
-        # 不崩溃即可，不验证具体工具调用结果
+        assert "tool_calls" in result
+        assert result["iteration"] == 1
+
+    @patch("financial_report_ai_assistant.core.agent.create_llm")
+    def test_tool_execution_batch(self, mock_create_llm):
+        """LLM 返回批量工具调用"""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = _mock_llm_response(
+            '[{"name": "tool_calculate_growth_rate", "args": {"current": 1200, "previous": 1000}},'
+            '{"name": "tool_calculate_margin", "args": {"profit": 300, "revenue": 1000}}]'
+        )
+        mock_create_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import executor_node
+        state = {
+            "question": "分析盈利",
+            "context": "上下文",
+            "plan": ["计算增长率", "计算利润率"],
+            "tool_results": [],
+            "iteration": 0
+        }
+        result = executor_node(state)
+
+        assert len(result["tool_calls"]) == 2
+        assert len(result["tool_results"]) == 2
+        assert result["iteration"] == 1
+
+    @patch("financial_report_ai_assistant.core.agent.create_llm")
+    def test_unknown_tool(self, mock_create_llm):
+        """LLM 返回未知工具名称"""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = _mock_llm_response(
+            '[{"name": "nonexistent_tool", "args": {}}]'
+        )
+        mock_create_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import executor_node
+        state = {
+            "question": "测试",
+            "context": "上下文",
+            "plan": ["任务"],
+            "tool_results": [],
+            "iteration": 0
+        }
+        result = executor_node(state)
+
+        assert "未知工具" in result["tool_results"][0]
+
+    @patch("financial_report_ai_assistant.core.agent.create_llm")
+    def test_max_iterations_hard_stop(self, mock_create_llm):
+        """迭代达 MAX_ITERATIONS 时直接停止"""
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import executor_node, MAX_ITERATIONS
+        state = {
+            "question": "测试",
+            "context": "",
+            "plan": ["任务"],
+            "tool_results": [],
+            "iteration": MAX_ITERATIONS
+        }
+        result = executor_node(state)
+
+        assert result["should_continue"] is False
 
     @patch("financial_report_ai_assistant.core.agent.create_llm")
     def test_no_api_key(self, mock_create_llm):
         mock_create_llm.return_value = None
 
         from financial_report_ai_assistant.core.agent import executor_node
-        state = {"question": "测试", "context": "", "plan": ["任务"], "tool_results": []}
+        state = {"question": "测试", "context": "", "plan": ["任务"], "tool_results": [], "iteration": 0}
         result = executor_node(state)
 
         assert result["tool_results"] == ["错误：API Key 未配置"]
+        assert result["should_continue"] is False
 
 
 # ============================================================
@@ -274,16 +339,21 @@ class TestAnswerNode:
 class TestShouldContinueEdge:
     def test_continue(self):
         from financial_report_ai_assistant.core.agent import should_continue_edge
-        assert should_continue_edge({"should_continue": True}) == "continue"
+        assert should_continue_edge({"should_continue": True, "iteration": 1}) == "continue"
 
     def test_end(self):
         from financial_report_ai_assistant.core.agent import should_continue_edge
-        assert should_continue_edge({"should_continue": False}) == "end"
+        assert should_continue_edge({"should_continue": False, "iteration": 1}) == "end"
 
     def test_missing_key(self):
         """缺少 should_continue 键时默认结束"""
         from financial_report_ai_assistant.core.agent import should_continue_edge
         assert should_continue_edge({}) == "end"
+
+    def test_max_iteration_overrides_continue(self):
+        """即使 should_continue=True，iteration 达上限也停止"""
+        from financial_report_ai_assistant.core.agent import should_continue_edge, MAX_ITERATIONS
+        assert should_continue_edge({"should_continue": True, "iteration": MAX_ITERATIONS}) == "end"
 
 
 # ============================================================
@@ -372,10 +442,10 @@ class TestRunAgentQuery:
         # 反思器返回 FINISH
         # 回答生成
         mock_llm.invoke.side_effect = [
-            _mock_llm_response("1. 提取数据"),          # planner
-            _mock_llm_response('{"name": "FINISH", "args": {}}'),  # executor
-            _mock_llm_response("FINISH\n结果合理"),       # reflection
-            _mock_llm_response("营收增长率为20%。"),       # answer
+            _mock_llm_response("1. 提取数据"),                          # planner
+            _mock_llm_response('[{"name": "FINISH", "args": {}}]'),     # executor
+            _mock_llm_response("FINISH\n结果合理"),                     # reflection
+            _mock_llm_response("营收增长率为20%。"),                     # answer
         ]
         mock_create_llm.return_value = mock_llm
 

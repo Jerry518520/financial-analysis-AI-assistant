@@ -69,13 +69,6 @@ def preview_chunks(full_text: str, max_chars: int = 500):
         print()
     return [doc.page_content for doc in docs]
 
-def _extract_page_num(text: str) -> int:
-    """从文本中提取页码"""
-    match = re.search(r'--- Page (\d+) ---', text)
-    if match:
-        return int(match.group(1))
-    return 1
-
 def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Document]:
     """按 PDF 页切分文本，每块记录 page_num"""
     global PAGE_NUM_MAP
@@ -186,8 +179,8 @@ def _clear_index():
         shutil.rmtree(INDEX_PATH)
         print("🗑️ 旧索引已删除")
 
-def _rebuild_page_num_map(full_text: str):
-    """重建页码映射表"""
+def _rebuild_page_num_map(full_text: str, max_chars_per_chunk: int = 3000):
+    """重建页码映射表（必须与 _split_by_page 的分块逻辑完全一致）"""
     global PAGE_NUM_MAP
     PAGE_NUM_MAP = {}
 
@@ -200,8 +193,15 @@ def _rebuild_page_num_map(full_text: str):
         page_num = int(parts[i])
         content = parts[i + 1] if i + 1 < len(parts) else ""
         if content.strip():
-            PAGE_NUM_MAP[doc_index] = page_num
-            doc_index += 1
+            if len(content) > max_chars_per_chunk:
+                # 长页面切分成多个子块，每个子块都映射到同一页码
+                sub_chunks = [content[j:j+max_chars_per_chunk] for j in range(0, len(content), max_chars_per_chunk)]
+                for sub_chunk in sub_chunks:
+                    PAGE_NUM_MAP[doc_index] = page_num
+                    doc_index += 1
+            else:
+                PAGE_NUM_MAP[doc_index] = page_num
+                doc_index += 1
         i += 2
 
     print(f"📄 PAGE_NUM_MAP 已重建: {PAGE_NUM_MAP}")

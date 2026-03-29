@@ -20,7 +20,8 @@ def client():
          patch("financial_report_ai_assistant.api.main.query_rag_with_source") as mock_rag, \
          patch("financial_report_ai_assistant.api.main.run_agent_query") as mock_agent, \
          patch("financial_report_ai_assistant.api.analysis.query_rag") as mock_analysis_rag, \
-         patch("financial_report_ai_assistant.api.analysis.llm") as mock_llm:
+         patch("financial_report_ai_assistant.api.analysis.ChatPromptTemplate") as mock_prompt_cls, \
+         patch("financial_report_ai_assistant.api.analysis.StrOutputParser") as mock_parser_cls:
 
         # 默认 mock 行为
         mock_parse.return_value = {
@@ -32,10 +33,18 @@ def client():
         mock_rag.return_value = {"context": "检索到的上下文", "page_num": 1}
         mock_agent.return_value = "根据分析，答案是X。"
         mock_analysis_rag.return_value = "检索到的摘要上下文"
-        mock_llm_instance = MagicMock()
-        mock_llm_instance.invoke.return_value.content = "摘要内容"
-        mock_llm.__truediv__ = MagicMock(return_value=mock_llm_instance)
-        mock_llm.__or__ = MagicMock(return_value=mock_llm_instance)
+        # mock chain 管道：prompt | llm | parser
+        # mock_prompt_cls.from_template() 返回 mock_prompt
+        # mock_prompt.__or__(llm) 返回 mock_step
+        # mock_step.__or__(parser) 返回 mock_chain
+        # mock_chain.invoke() 返回 "摘要内容"
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = "摘要内容"
+        mock_step = MagicMock()
+        mock_step.__or__ = MagicMock(return_value=mock_chain)
+        mock_prompt = MagicMock()
+        mock_prompt.__or__ = MagicMock(return_value=mock_step)
+        mock_prompt_cls.from_template.return_value = mock_prompt
 
         from financial_report_ai_assistant.api.main import app, CURRENT_PDF_PATH
         # 重置 PDF 路径，避免测试间污染

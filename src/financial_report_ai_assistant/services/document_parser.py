@@ -197,7 +197,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
             if os.path.exists(subset_filename):
                 try:
                     os.remove(subset_filename)
-                except:
+                except OSError:
                     pass
 
         # 4. 合并所有内容 (按页码顺序)
@@ -227,5 +227,5 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
         # 确保 doc 资源被释放（即使在 LlamaParse 等异常路径上）
         try:
             doc.close()
-        except:
+        except (NameError, AttributeError):
             pass

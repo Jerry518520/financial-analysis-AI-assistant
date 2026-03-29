@@ -26,6 +26,7 @@ app = FastAPI(title="AI 财报分析助手")
 # 【新增】保存当前 PDF 路径，供 /highlight 使用
 CURRENT_PDF_PATH = None
 CACHE_DIR = "cache_data"
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB 上传限制
 
 app.include_router(analysis_router)
 
@@ -38,9 +39,6 @@ app.add_middleware(
 )
 
 class ChatRequest(BaseModel):
-    # 注意：现在不需要前端传 context 了，context 由后端自己查
-    # 但为了兼容 MVP 代码，我们先留着，只不过不用它了
-    context: str | None = None 
     question: str
 
 @app.get("/")
@@ -51,6 +49,10 @@ def read_root():
 async def upload_financial_report(file: UploadFile = File(...)):
     global CURRENT_PDF_PATH
     content = await file.read()
+    
+    if len(content) > MAX_UPLOAD_SIZE:
+        return JSONResponse(status_code=413, content={"error": f"文件过大，最大支持 {MAX_UPLOAD_SIZE // (1024*1024)}MB"})
+    
     try:
         # 0. 【新增】保存 PDF 到缓存目录，供 /highlight 使用
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -92,7 +94,13 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
     """预览切块效果"""
     content = await file.read()
     result = parse_pdf_bytes(content)
+    
+    if result.get("status") == "error":
+        return JSONResponse(status_code=500, content={"error": f"解析失败: {result.get('error', '未知错误')}"})
+    
     full_text = result.get("full_text", "")
+    if not full_text:
+        return JSONResponse(status_code=422, content={"error": "解析结果中没有文本内容"})
     
     from financial_report_ai_assistant.services.rag_service import preview_chunks
     chunks = preview_chunks(full_text)
@@ -113,14 +121,15 @@ async def chat_with_report(request: ChatRequest):
 
         relevant_context = rag_result["context"]
         page_num = rag_result["page_num"]
+        source_pages = rag_result.get("source_pages", [page_num])
 
         print(f"🔍 用户问: {request.question}")
-        print(f"📄 RAG 返回页码: {page_num}")
+        print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")
 
         # Agent 推理涉及多次 LLM API 调用，放入线程池避免阻塞
         answer = await asyncio.to_thread(run_agent_query, request.question, relevant_context)
 
-        return {"answer": answer, "source_page": page_num}
+        return {"answer": answer, "source_page": page_num, "source_pages": source_pages}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
 

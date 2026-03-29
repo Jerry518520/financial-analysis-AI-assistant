@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from financial_report_ai_assistant.services.rag_service import query_rag
-from financial_report_ai_assistant.services.ai_chat import llm
+from financial_report_ai_assistant.services.ai_chat import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 import asyncio
@@ -77,28 +78,26 @@ async def generate_report_summary(request: AnalysisRequest):
     }
     focus_hint = focus_instructions.get(request.focus, focus_instructions["general"])
     
-    template = """
-    你是一位资深的金融分析师。请根据以下从财报中检索到的片段，为用户生成一份结构清晰的【财报核心摘要】。
-    
-    【重要】禁止任何开场白、问候语或自我介绍，直接从正文内容开始。
-    
-    【检索到的财报片段】：
-    {context}
-    
-    【任务要求】：
-    1. **核心财务指标**：提取营收、净利润、毛利率等关键数据及其同比变化（如果片段中有）。
-    2. **经营亮点**：简述本季度的业务进展或重大成就。
-    3. **风险提示**：如果有提及，列出主要的风险因素。
-    4. **未来展望**：管理层对未来的预期。
-    
-    【分析重点】：{focus_hint}
-    
-    请使用 Markdown 格式输出，使用小标题（###）分隔不同部分。如果某些信息在片段中未找到，请直接省略该部分，不要编造。
-    保持语言专业、客观、精炼。
-    """
+    template = """你是一位资深的金融分析师。请根据以下从财报中检索到的片段，为用户生成一份结构清晰的【财报核心摘要】。
+
+【重要】禁止任何开场白、问候语或自我介绍，直接从正文内容开始。
+
+【检索到的财报片段】：
+{context}
+
+【任务要求】：
+1. **核心财务指标**：提取营收、净利润、毛利率等关键数据及其同比变化（如果片段中有）。
+2. **经营亮点**：简述本季度的业务进展或重大成就。
+3. **风险提示**：如果有提及，列出主要的风险因素。
+4. **未来展望**：管理层对未来的预期。
+
+【分析重点】：{focus_hint}
+
+请使用 Markdown 格式输出，使用小标题（###）分隔不同部分。如果某些信息在片段中未找到，请直接省略该部分，不要编造。
+保持语言专业、客观、精炼。"""
     
     prompt = ChatPromptTemplate.from_template(template)
-    chain = prompt | llm | StrOutputParser()
+    chain = prompt | get_llm() | StrOutputParser()
     
     try:
         print("💡 正在生成摘要...")
@@ -106,4 +105,4 @@ async def generate_report_summary(request: AnalysisRequest):
         return {"summary": summary}
     except Exception as e:
         print(f"❌ 摘要生成失败: {e}")
-        return {"summary": f"生成摘要时发生错误: {str(e)}"}
+        return JSONResponse(status_code=500, content={"error": f"生成摘要时发生错误: {str(e)}"})

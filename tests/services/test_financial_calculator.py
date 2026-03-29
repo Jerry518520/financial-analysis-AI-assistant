@@ -245,6 +245,7 @@ class TestAnalyzeTrend:
         assert result["趋势方向"] == "上升"
         assert result["首年数值"] == 100
         assert result["末年数值"] == 150
+        assert result["总年数"] == 3
 
     def test_declining_trend(self):
         result = analyze_trend([150, 120, 100])
@@ -264,21 +265,31 @@ class TestAnalyzeTrend:
         assert result["趋势"] == "数据不足"
 
     def test_with_none_values(self):
-        """包含 None 值，应被过滤"""
+        """包含 None 值，应被过滤掉，保留 0"""
         result = analyze_trend([100, None, 150])
         assert result["趋势方向"] == "上升"
         assert result["首年数值"] == 100
         assert result["末年数值"] == 150
 
     def test_with_zeros(self):
-        """包含 0，应被过滤掉"""
+        """包含 0，现在是合法值，保留参与计算"""
         result = analyze_trend([100, 0, 200])
         assert result["趋势方向"] == "上升"
+        assert result["总年数"] == 3  # 3个数据点，0 被保留
+        # first=100, last=200, years=2
+        assert result["年均增长率(CAGR)"] == round((200/100) ** (1/2) - 1, 4)
 
-    def test_all_zeros_filtered(self):
-        """过滤后不足2个有效值"""
+    def test_all_zeros(self):
+        """全为 0：first=0, last=0, CAGR 无法计算"""
         result = analyze_trend([0, 0])
-        assert result["趋势"] == "数据不足"
+        assert result["趋势方向"] == "持平"
+        assert result["年均增长率(CAGR)"] == 0
+
+    def test_zero_first_nonzero_last(self):
+        """首年为 0，末年非 0，CAGR 无法计算"""
+        result = analyze_trend([0, 100])
+        assert result["趋势方向"] == "上升"
+        assert result["年均增长率(CAGR)"] == "无法计算（首年数值为0）"
 
     def test_cagr_calculation(self):
         """验证 CAGR 计算：(150/100)^(1/1) - 1 = 0.5（只有2个数据点，years=1）"""

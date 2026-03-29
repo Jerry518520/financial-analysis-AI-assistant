@@ -2,55 +2,38 @@
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 
-# 1. 加载环境变量
 load_dotenv()
 
-# 2. 获取 Key
-api_key = os.getenv("DEEPSEEK_API_KEY")
-if not api_key:
-    raise ValueError("❌ 未找到 DEEPSEEK_API_KEY，请检查 .env 文件！")
+# 延迟初始化：不再在模块级 raise，首次访问时才创建 LLM 实例
+_llm_instance = None
 
-# 3. 初始化 DeepSeek 模型
-# 注意：这里用了 langchain_openai 库，但配置的是 DeepSeek 的地址
-llm = ChatOpenAI(
-    model="deepseek-chat", 
-    api_key=api_key,
-    base_url="https://api.deepseek.com", # DeepSeek 的官方接口地址
-    temperature=0.3
-)
 
-def get_ai_response(context_text: str, user_question: str):
-    """
-    发送请求给 DeepSeek
-    """
-    # 定义提示词模板
-    template = """
-    你是一位专业的金融分析师。请根据以下提供的财报片段回答用户问题。
-    如果文中没有提到相关信息，请诚实地说"根据当前片段无法回答"。
-    
-    【重要】回答要求：
-    - 直接给出回答，不要有任何开场白、问候语或自我介绍
-    - 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头
-    - 第一句话就是实质性内容
-    
-    【财报片段】：
-    {context}
-    
-    【用户问题】：
-    {question}
-    """
-    
-    prompt = ChatPromptTemplate.from_template(template)
-    chain = prompt | llm | StrOutputParser()
-    
-    try:
-        response = chain.invoke({
-            "context": context_text,
-            "question": user_question
-        })
-        return response
-    except Exception as e:
-        return f"DeepSeek 思考失败: {str(e)}"
+def get_llm():
+    """获取或延迟初始化 DeepSeek LLM 实例"""
+    global _llm_instance
+    if _llm_instance is None:
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("❌ 未找到 DEEPSEEK_API_KEY，请检查 .env 文件！")
+        _llm_instance = ChatOpenAI(
+            model="deepseek-chat",
+            api_key=api_key,
+            base_url="https://api.deepseek.com",
+            temperature=0.3,
+        )
+    return _llm_instance
+
+
+# 向后兼容的属性访问（analysis.py 通过 `from ai_chat import llm` 使用）
+# @property 方式无法用在模块级别，所以提供一个 module-level 属性代理
+class _LLMProxy:
+    """代理对象，延迟加载 LLM 实例，支持 analysis.py 中的 `from ai_chat import llm` 用法"""
+    def __getattr__(self, name):
+        return getattr(get_llm(), name)
+
+    def __call__(self, *args, **kwargs):
+        return get_llm()(*args, **kwargs)
+
+
+llm = _LLMProxy()
