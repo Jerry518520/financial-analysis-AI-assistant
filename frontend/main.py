@@ -491,11 +491,15 @@ def _process_chat(prompt):
         ]
         for pct, text in steps:
             progress_bar.progress(pct, text=text)
-            t.join(timeout=8)
+            # 每步等待最多 15 秒（Agent 深度分析耗时较长）
+            t.join(timeout=15)
             if not t.is_alive():
                 break
 
-        t.join(timeout=60)
+        # 如果线程还在跑，继续等待（最多再等 120 秒）
+        if t.is_alive():
+            progress_text.markdown("⏳ Agent 深度分析中，请稍候...")
+            t.join(timeout=120)
 
         if chat_result["error"]:
             progress_bar.empty()
@@ -524,7 +528,11 @@ def _process_chat(prompt):
         else:
             progress_bar.empty()
             progress_text.empty()
-            st.error("❌ 未收到有效回答")
+            # 线程超时：请求可能还在后端执行
+            if t.is_alive():
+                st.warning("⏳ 回答生成超时，Agent 仍在后台分析中。请稍后在聊天框中重新提问相同问题。")
+            else:
+                st.error("❌ 未收到有效回答，请重试。")
 
 
 # ============================================================

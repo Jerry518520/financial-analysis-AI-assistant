@@ -505,6 +505,7 @@ def create_financial_agent():
 
 def run_agent_query(query: str, context: str = ""):
     """运行真正的 Agent"""
+    import time
     agent = create_financial_agent()
     if not agent:
         return "Agent 初始化失败，请检查 API Key。"
@@ -522,8 +523,20 @@ def run_agent_query(query: str, context: str = ""):
             "should_continue": True
         }
         
+        print(f"🤖 Agent 开始执行 | 问题: {query[:50]}... | 上下文长度: {len(context)} 字符")
+        start_time = time.time()
+        
         result = agent.invoke(initial_state, {"recursion_limit": MAX_ITERATIONS * 5 + 20})
-        return result.get("final_answer", "Agent 执行完成，但未生成回答。")
+        
+        elapsed = time.time() - start_time
+        final_answer = result.get("final_answer", "")
+        print(f"✅ Agent 执行完成 | 耗时: {elapsed:.1f}s | 回答长度: {len(final_answer)} 字符")
+        
+        if not final_answer.strip():
+            print(f"⚠️ Agent 返回空回答！完整 state: tool_calls={result.get('tool_calls', [])}, tool_results={result.get('tool_results', [])}")
+            return "⚠️ Agent 未能生成有效回答。这可能是由于 API 响应异常，请稍后重试。"
+        
+        return final_answer
     
     except Exception as e:
         error_msg = str(e)
