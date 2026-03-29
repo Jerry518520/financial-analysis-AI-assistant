@@ -1,9 +1,12 @@
 # 文件: frontend/main.py
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import pandas as pd
 import os
 import re
+import threading
+import time
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
@@ -121,17 +124,27 @@ p, span, div, li, td, th {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
 }
 
-/* 聊天输入框 */
-[data-testid="stChatInput"] {
+/* 聊天输入框 — 多层选择器确保覆盖 Streamlit 内联样式 */
+[data-testid="stChatInput"],
+[data-testid="stChatInput"] div,
+[data-testid="stChatInput"] section,
+[data-testid="stChatInput"] fieldset {
     background: #1a1d29 !important;
     border: 1px solid rgba(0, 212, 170, 0.2) !important;
     border-radius: 12px !important;
 }
-[data-testid="stChatInput"] textarea {
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] input,
+[data-testid="stChatInput"] [class*="textInput"],
+[data-testid="stChatInput"] [class*="stTextArea"],
+[data-testid="stChatInput"] [class*="stTextInput"] {
     background: transparent !important;
     color: #e2e8f0 !important;
+    caret-color: #00d4aa !important;
+    -webkit-text-fill-color: #e2e8f0 !important;
 }
-[data-testid="stChatInput"] textarea::placeholder {
+[data-testid="stChatInput"] textarea::placeholder,
+[data-testid="stChatInput"] input::placeholder {
     color: #475569 !important;
 }
 
@@ -260,21 +273,53 @@ hr, [data-testid="stDivider"] {
 
 
 # ============================================================
-# 自动滚动到最新消息（选择预选问题后不再需要手动滚动）
+# 自动滚动 + 强制输入框颜色修复（通过 components.html 注入 JS）
+# st.markdown 的 <script> 不会执行，必须用 components.html
 # ============================================================
-st.markdown("""
-<script>
-function scrollToBottom() {
-    const chatContainer = window.parent.document.querySelector('[data-testid="stChatMessageContainer"]');
-    if (chatContainer) {
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+def _auto_scroll():
+    """通过 components.html 注入 JS 实现真正的自动滚动 + 强制输入框颜色"""
+    components.html("""
+    <script>
+    function fixAndScroll() {
+        var doc = window.parent.document;
+        
+        // 1. 强制修复聊天输入框文字颜色（覆盖 Streamlit 内联样式）
+        var inputs = doc.querySelectorAll(
+            '[data-testid="stChatInput"] textarea, ' +
+            '[data-testid="stChatInput"] input, ' +
+            '[data-testid="stChatInput"] [class*="textInput"]'
+        );
+        inputs.forEach(function(el) {
+            el.style.setProperty('color', '#e2e8f0', 'important');
+            el.style.setProperty('caret-color', '#00d4aa', 'important');
+            el.style.setProperty('-webkit-text-fill-color', '#e2e8f0', 'important');
+        });
+        
+        // 2. 滚动到聊天底部
+        var chatContainer = doc.querySelector('[data-testid="stChatMessageContainer"]');
+        if (chatContainer) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+        }
     }
-}
-// 页面加载完成后延迟滚动（等待 Streamlit 渲染完毕）
-setTimeout(scrollToBottom, 300);
-setTimeout(scrollToBottom, 800);
-</script>
-""", unsafe_allow_html=True)
+    
+    // 立即执行多次（Streamlit 渲染有延迟）
+    setTimeout(fixAndScroll, 100);
+    setTimeout(fixAndScroll, 300);
+    setTimeout(fixAndScroll, 600);
+    setTimeout(fixAndScroll, 1000);
+    setTimeout(fixAndScroll, 2000);
+    
+    // MutationObserver 监听 DOM 变化，确保新内容也能触发滚动
+    var observer = new MutationObserver(function() {
+        fixAndScroll();
+    });
+    observer.observe(window.parent.document.body, { childList: true, subtree: true });
+    
+    // 15秒后停止观察，避免性能消耗
+    setTimeout(function() { observer.disconnect(); }, 15000);
+    </script>
+    """, height=0)
 
 
 # ============================================================
@@ -479,31 +524,32 @@ if 'result' not in st.session_state:
 
         if uploaded_file is not None:
             if st.button("🚀 开始解析", type="primary", use_container_width=True):
-                progress = st.progress(0, text="📤 正在上传文件...")
-                try:
-                    files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                    progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                    resp = requests.post(f"{API_URL}/upload", files=files)
-                    progress.progress(70, text="🧠 正在构建 RAG 向量库...")
-                    if resp.status_code == 200:
-                        progress.progress(100, text="✅ 解析完成！")
-                        st.session_state.result = resp.json()
-                        st.session_state.messages = []
-                        st.session_state.summary = None
-                        if "pending_question" in st.session_state:
-                            del st.session_state.pending_question
-                        st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                        st.rerun()
-                    else:
+                with st.spinner("📤 正在上传文件..."):
+                    progress = st.progress(0)
+                    try:
+                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                        progress.progress(30, text="🔍 正在解析 PDF 文本...")
+                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=120)
+                        progress.progress(70, text="🧠 正在构建 RAG 向量库...")
+                        if resp.status_code == 200:
+                            progress.progress(100, text="✅ 解析完成！")
+                            st.session_state.result = resp.json()
+                            st.session_state.messages = []
+                            st.session_state.summary = None
+                            if "pending_question" in st.session_state:
+                                del st.session_state.pending_question
+                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
+                            st.rerun()
+                        else:
+                            progress.empty()
+                            try:
+                                err = resp.json().get("error", "未知错误")
+                            except Exception:
+                                err = f"HTTP {resp.status_code}"
+                            st.error(f"解析失败：{err}")
+                    except Exception as e:
                         progress.empty()
-                        try:
-                            err = resp.json().get("error", "未知错误")
-                        except Exception:
-                            err = f"HTTP {resp.status_code}"
-                        st.error(f"解析失败：{err}")
-                except Exception as e:
-                    progress.empty()
-                    st.error(f"连接错误: {e}")
+                        st.error(f"连接错误: {e}")
 
     with col2:
         st.markdown("""
@@ -534,31 +580,32 @@ else:
 
         if uploaded_file is not None:
             if st.button("🚀 重新解析", type="primary", use_container_width=True):
-                progress = st.progress(0, text="📤 正在上传文件...")
-                try:
-                    files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                    progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                    resp = requests.post(f"{API_URL}/upload", files=files)
-                    progress.progress(70, text="🧠 正在构建 RAG 向量库...")
-                    if resp.status_code == 200:
-                        progress.progress(100, text="✅ 解析完成！")
-                        st.session_state.result = resp.json()
-                        st.session_state.messages = []
-                        st.session_state.summary = None
-                        if "pending_question" in st.session_state:
-                            del st.session_state.pending_question
-                        st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                        st.rerun()
-                    else:
+                with st.spinner("📤 正在上传文件..."):
+                    progress = st.progress(0)
+                    try:
+                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                        progress.progress(30, text="🔍 正在解析 PDF 文本...")
+                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=120)
+                        progress.progress(70, text="🧠 正在构建 RAG 向量库...")
+                        if resp.status_code == 200:
+                            progress.progress(100, text="✅ 解析完成！")
+                            st.session_state.result = resp.json()
+                            st.session_state.messages = []
+                            st.session_state.summary = None
+                            if "pending_question" in st.session_state:
+                                del st.session_state.pending_question
+                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
+                            st.rerun()
+                        else:
+                            progress.empty()
+                            try:
+                                err = resp.json().get("error", "未知错误")
+                            except Exception:
+                                err = f"HTTP {resp.status_code}"
+                            st.error(f"解析失败：{err}")
+                    except Exception as e:
                         progress.empty()
-                        try:
-                            err = resp.json().get("error", "未知错误")
-                        except Exception:
-                            err = f"HTTP {resp.status_code}"
-                        st.error(f"解析失败：{err}")
-                except Exception as e:
-                    progress.empty()
-                    st.error(f"连接错误: {e}")
+                        st.error(f"连接错误: {e}")
 
     with col2:
         data = st.session_state.result.get("analysis_result", {})
@@ -584,19 +631,46 @@ else:
             st.session_state.summary = None
 
         if st.button("✨ 生成核心摘要", use_container_width=True):
-            progress = st.progress(0, text="🔍 正在检索财报关键信息...")
-            try:
-                res = requests.post(f"{API_URL}/analyze/summary", json={"focus": "general"})
-                progress.progress(50, text="🧠 AI 正在综合分析...")
-                if res.status_code == 200:
-                    progress.progress(100, text="✅ 摘要生成完成！")
-                    st.session_state.summary = res.json().get("summary", "生成失败")
-                else:
-                    progress.empty()
-                    st.error(f"生成失败: {res.status_code}")
-            except Exception as e:
-                progress.empty()
-                st.error(f"请求错误: {e}")
+            progress_text = st.empty()
+            progress_bar = st.progress(0)
+            summary_result = {"data": None, "error": None}
+
+            def _generate_summary():
+                try:
+                    res = requests.post(f"{API_URL}/analyze/summary", json={"focus": "general"}, timeout=120)
+                    if res.status_code == 200:
+                        summary_result["data"] = res.json().get("summary", "生成失败")
+                    else:
+                        summary_result["error"] = f"生成失败: HTTP {res.status_code}"
+                except Exception as e:
+                    summary_result["error"] = f"请求错误: {e}"
+
+            # 后台线程执行请求，主线程更新进度条
+            t = threading.Thread(target=_generate_summary, daemon=True)
+            t.start()
+
+            steps = [
+                (0, "🔍 正在检索财报关键信息..."),
+                (20, "🔍 正在检索财报关键信息..."),
+                (45, "🧠 AI 正在综合分析财务数据..."),
+                (70, "🧠 AI 正在整理分析结论..."),
+                (90, "📝 正在生成最终摘要..."),
+            ]
+            for pct, text in steps:
+                progress_bar.progress(pct, text=text)
+                # 每步等待，如果线程已完成则提前退出
+                t.join(timeout=5)
+                if not t.is_alive():
+                    break
+
+            t.join(timeout=60)  # 最多再等60秒
+
+            if summary_result["data"]:
+                progress_bar.progress(100, text="✅ 摘要生成完成！")
+                st.session_state.summary = summary_result["data"]
+            elif summary_result["error"]:
+                progress_bar.empty()
+                st.error(summary_result["error"])
 
         if st.session_state.summary:
             st.markdown(f"""
@@ -683,6 +757,7 @@ else:
             prompt = st.session_state.pending_question
             del st.session_state.pending_question
             _process_chat(prompt)
+            _auto_scroll()  # 选择预选问题后自动滚动到对话区
 
         # ========== 正常输入 ==========
         if prompt := st.chat_input("请输入问题..."):

@@ -15,7 +15,7 @@ from financial_report_ai_assistant.services.financial_calculator import (
 
 load_dotenv()
 
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 8
 
 class AgentState(TypedDict):
     question: str
@@ -324,6 +324,8 @@ def executor_node(state: AgentState):
 
     except Exception as e:
         new_results.append(f"JSON 解析出错: {str(e)}，原始返回: {response_text[:200]}")
+        # JSON 解析失败 → 无法继续，显式停止循环
+        return {"should_continue": False, "tool_results": new_results}
 
     # 如果没有成功调用任何工具，停止循环
     if not new_calls:
@@ -333,7 +335,7 @@ def executor_node(state: AgentState):
         "tool_calls": new_calls,
         "tool_results": new_results,
         "iteration": iteration + 1,
-        # 不在这里设置 should_continue，交给 reflection 决定
+        "should_continue": True,  # 有工具调用成功 → 交给 reflection 决定是否继续
     }
 
 def reflection_node(state: AgentState):
@@ -487,8 +489,11 @@ def run_agent_query(query: str, context: str = ""):
             "should_continue": True
         }
         
-        result = agent.invoke(initial_state, {"recursion_limit": MAX_ITERATIONS * 4 + 10})
+        result = agent.invoke(initial_state, {"recursion_limit": MAX_ITERATIONS * 5 + 20})
         return result.get("final_answer", "Agent 执行完成，但未生成回答。")
     
     except Exception as e:
-        return f"Agent 执行出错: {str(e)}"
+        error_msg = str(e)
+        if "recursion_limit" in error_msg.lower() or "recursion" in error_msg.lower():
+            return "⚠️ 问题较为复杂，分析超时。请尝试将问题拆分为更具体的子问题重新提问。例如：不要问\"未来发展前景如何\"，而是问\"营收同比增长了多少\"。"
+        return f"Agent 执行出错: {error_msg}"
