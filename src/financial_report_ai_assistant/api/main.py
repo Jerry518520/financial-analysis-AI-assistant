@@ -64,13 +64,12 @@ async def upload_financial_report(file: UploadFile = File(...)):
         # 1. 解析 PDF (获取全量文本)
         result = parse_pdf_bytes(content)
         
-        # 2. 【新增】构建 RAG 向量库
-        # 这一步会用你的 4060 进行计算
+        # 2. 构建 RAG 向量库（传入文件哈希，新文件自动重建索引）
         full_text = result.get("full_text", "")
         print(f"📝 解析结果: 文本长度 = {len(full_text)} 字符")
         if full_text:
             print("🚀 开始构建 RAG 向量库...")
-            success = build_vector_store(full_text)
+            success = build_vector_store(full_text, pdf_hash=file_hash)
             if success:
                 print(">>> RAG 索引构建成功！")
             else:

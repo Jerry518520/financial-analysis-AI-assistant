@@ -154,10 +154,10 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
         llama_pages_content = {} # {page_index: markdown_content}
         
         if table_pages_indices:
-            # 如果表格页太多，按优先级截断（防止 demo 跑太久）
+            # 如果表格页太多，按优先级截断（防止 LlamaParse 超时/超额度）
             target_indices = table_pages_indices[:MAX_LLAMA_PAGES]
             if len(table_pages_indices) > MAX_LLAMA_PAGES:
-                print(f"⚠️ 表格页过多 ({len(table_pages_indices)} > {MAX_LLAMA_PAGES})，仅处理前 {MAX_LLAMA_PAGES} 页表格...")
+                print(f"⚠️ 表格页共 {len(table_pages_indices)} 页，LlamaParse 只增强前 {MAX_LLAMA_PAGES} 页（其余降级为纯文本提取）")
                 # 对于那些被截断的表格页，我们还是要提取纯文本，不能丢弃
                 for idx in table_pages_indices[MAX_LLAMA_PAGES:]:
                     page = doc[idx]

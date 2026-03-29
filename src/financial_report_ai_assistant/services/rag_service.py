@@ -31,12 +31,25 @@ vector_store = None
 PAGE_NUM_MAP: Dict[int, int] = {}
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 INDEX_PATH = PROJECT_ROOT / "faiss_index"
+INDEX_HASH_PATH = INDEX_PATH / ".pdf_hash"  # 记录当前索引对应哪个 PDF
 
 def get_device():
-    # ⚠️ 关键点：既然修好了 torch，一定要用 cuda
+    """
+    获取计算设备。必须有 CUDA GPU，否则直接报错终止。
+    向量化 BGE-M3 模型在 CPU 上极其缓慢，不适合生产使用。
+    """
     if torch.cuda.is_available():
+        device_name = torch.cuda.get_device_name(0)
+        print(f"🟢 检测到 GPU: {device_name}")
         return "cuda"
-    return "cpu"
+    else:
+        raise RuntimeError(
+            "❌ 未检测到 CUDA GPU！RAG 向量化需要 GPU 加速。\n"
+            "请检查：\n"
+            "1. 是否安装了 NVIDIA 驱动\n"
+            "2. 是否安装了 CUDA Toolkit\n"
+            "3. 是否安装了支持 CUDA 的 PyTorch (pip install torch --index-url https://download.pytorch.org/whl/cu118)"
+        )
 
 def preview_chunks(full_text: str, max_chars: int = 500):
     """预览切块效果（简单按页切分）"""
@@ -90,21 +103,38 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
 
     return documents
 
-def build_vector_store(full_text: str):
+def build_vector_store(full_text: str, pdf_hash: str = ""):
+    """
+    构建 RAG 向量库。
+    
+    pdf_hash: 上传文件的 MD5 哈希。
+              - 如果和上次索引的哈希一致，且索引文件存在，则复用旧索引（只重建 PAGE_NUM_MAP）
+              - 如果不同，强制删除旧索引并重建
+              - 如果不传，每次都强制重建
+    """
     global vector_store, PAGE_NUM_MAP
     device = get_device()
     print(f"🔥 RAG 服务启动 | 计算设备: {device}")
     print(f"📂 INDEX_PATH: {INDEX_PATH}")
 
     try:
-        # 检查本地索引是否存在且完整
-        if os.path.exists(str(INDEX_PATH)) and os.path.exists(str(INDEX_PATH / "index.faiss")):
-            print("♻️ 发现本地 FAISS 索引，尝试加载...")
-            if load_vector_store():
-                # 索引已加载，重新构建 PAGE_NUM_MAP
-                _rebuild_page_num_map(full_text)
-                print("✅ 使用已有索引，跳过重建")
-                return True
+        # 检查是否可以复用旧索引（同一次 PDF 的重复上传）
+        if pdf_hash:
+            old_hash = ""
+            if INDEX_HASH_PATH.exists():
+                old_hash = INDEX_HASH_PATH.read_text().strip()
+            
+            if pdf_hash == old_hash and os.path.exists(str(INDEX_PATH / "index.faiss")):
+                print(f"♻️ 相同文件 (hash={pdf_hash[:8]}...)，复用已有索引")
+                if load_vector_store():
+                    _rebuild_page_num_map(full_text)
+                    print("✅ 使用已有索引，跳过重建")
+                    return True
+            else:
+                # PDF 不同，删除旧索引
+                if old_hash and old_hash != pdf_hash:
+                    print(f"🔄 检测到新文件 (旧hash={old_hash[:8]}..., 新hash={pdf_hash[:8]}...)，删除旧索引并重建")
+                    _clear_index()
 
         print("🔄 正在加载 embedding 模型...")
         embeddings = SentenceTransformerEmbeddings(
@@ -127,6 +157,11 @@ def build_vector_store(full_text: str):
 
         INDEX_PATH.mkdir(parents=True, exist_ok=True)
         vector_store.save_local(str(INDEX_PATH))
+        
+        # 保存当前 PDF 哈希，下次上传可比对
+        if pdf_hash:
+            INDEX_HASH_PATH.write_text(pdf_hash)
+        
         print(f"🎉 索引构建成功并已保存！包含 {vector_store.index.ntotal} 条向量。")
         print(f"📄 页码映射表: {PAGE_NUM_MAP}")
         return True
@@ -136,6 +171,13 @@ def build_vector_store(full_text: str):
         print(f"❌ RAG 构建失败: {e}")
         print(f"❌ 详细错误: {traceback.format_exc()}")
         return False
+
+def _clear_index():
+    """删除旧的索引文件"""
+    import shutil
+    if INDEX_PATH.exists():
+        shutil.rmtree(INDEX_PATH)
+        print("🗑️ 旧索引已删除")
 
 def _rebuild_page_num_map(full_text: str):
     """重建页码映射表"""
