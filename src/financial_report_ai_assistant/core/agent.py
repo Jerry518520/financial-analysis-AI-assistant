@@ -497,3 +497,54 @@ def run_agent_query(query: str, context: str = ""):
         if "recursion_limit" in error_msg.lower() or "recursion" in error_msg.lower():
             return "⚠️ 问题较为复杂，分析超时。请尝试将问题拆分为更具体的子问题重新提问。例如：不要问\"未来发展前景如何\"，而是问\"营收同比增长了多少\"。"
         return f"Agent 执行出错: {error_msg}"
+
+
+# ==================== 轻量级查询（简单问题快速通道） ====================
+
+import re as _re
+
+_SIMPLE_QUERY_PATTERNS = [
+    r"是多少", r"有多少", r"多少", r"是什么", r"有哪些",
+    r"列出", r"写出来", r"给出",
+    r"营收", r"收入", r"利润", r"净利润", r"毛利",
+    r"资产", r"负债", r"现金流", r"现金",
+    r"ROE", r"ROA", r"EPS", r"PE",
+    r"毛利率", r"净利率", r"资产负债率", r"流动比率", r"速动比率",
+    r"周转率", r"股息",
+]
+
+def is_simple_query(question: str) -> bool:
+    """判断问题是否为简单查询（不需要多步工具调用）"""
+    q = question.strip()
+    if len(q) > 50:
+        return False
+    complex_keywords = ["分析", "对比", "趋势", "前景", "评估", "风险", "综合", "总结", "预测", "建议", "策略"]
+    for kw in complex_keywords:
+        if kw in q:
+            return False
+    for pattern in _SIMPLE_QUERY_PATTERNS:
+        if _re.search(pattern, q):
+            return True
+    return False
+
+def run_lightweight_query(query: str, context: str = "") -> str:
+    """轻量级查询：单次 LLM 调用 + RAG 上下文，适合简单事实性问题"""
+    from financial_report_ai_assistant.services.ai_chat import get_llm
+    llm = get_llm()
+
+    prompt = f"""你是一位专业的金融分析师。请根据以下财报背景信息，直接回答用户的问题。
+
+【背景信息】：
+{context}
+
+【用户问题】：{query}
+
+回答要求：
+1. 直接回答，不要有任何开场白、问候语或自我介绍
+2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头
+3. 如果背景信息中没有相关数据，请如实告知"财报中未找到相关数据"
+4. 包含具体的数值（如有）
+5. 使用 Markdown 格式"""
+
+    response = llm.invoke(prompt)
+    return response.content

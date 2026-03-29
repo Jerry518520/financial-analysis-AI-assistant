@@ -116,9 +116,8 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
 @app.post("/chat")
 async def chat_with_report(request: ChatRequest):
     try:
-        # RAG 检索也涉及 FAISS 操作，放入线程池
+        # RAG 检索
         rag_result = await asyncio.to_thread(query_rag_with_source, request.question)
-
         relevant_context = rag_result["context"]
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
@@ -126,8 +125,14 @@ async def chat_with_report(request: ChatRequest):
         print(f"🔍 用户问: {request.question}")
         print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")
 
-        # Agent 推理涉及多次 LLM API 调用，放入线程池避免阻塞
-        answer = await asyncio.to_thread(run_agent_query, request.question, relevant_context)
+        # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
+        from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
+        if is_simple_query(request.question):
+            print(f"⚡ 轻量级查询模式（简单问题快速通道）")
+            answer = await asyncio.to_thread(run_lightweight_query, request.question, relevant_context)
+        else:
+            print(f"🤖 Agent 深度分析模式")
+            answer = await asyncio.to_thread(run_agent_query, request.question, relevant_context)
 
         return {"answer": answer, "source_page": page_num, "source_pages": source_pages}
     except Exception as e:

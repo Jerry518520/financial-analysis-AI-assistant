@@ -278,10 +278,10 @@ hr, [data-testid="stDivider"] {
 # ============================================================
 def _auto_scroll():
     """通过 components.html 注入 JS 实现真正的自动滚动 + 强制输入框颜色"""
-    components.html("""
+    st.html("""
     <script>
     function fixAndScroll() {
-        var doc = window.parent.document;
+        var doc = document;
         
         // 1. 强制修复聊天输入框文字颜色（覆盖 Streamlit 内联样式）
         var inputs = doc.querySelectorAll(
@@ -314,12 +314,12 @@ def _auto_scroll():
     var observer = new MutationObserver(function() {
         fixAndScroll();
     });
-    observer.observe(window.parent.document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true });
     
     // 15秒后停止观察，避免性能消耗
     setTimeout(function() { observer.disconnect(); }, 15000);
     </script>
-    """, height=0)
+    """)
 
 
 # ============================================================
@@ -372,7 +372,7 @@ def get_recommended_questions(user_question):
 def call_chat_api(prompt):
     """统一的聊天 API 调用逻辑"""
     payload = {"question": prompt}
-    res = requests.post(f"{API_URL}/chat", json=payload)
+    res = requests.post(f"{API_URL}/chat", json=payload, timeout=120)
 
     if res.status_code == 200:
         data = res.json()
@@ -449,7 +449,6 @@ def _render_recommended(rec_list, msg_idx):
 
 def _process_chat(prompt):
     """处理一次对话：发送问题 → 渲染回答 → 追加历史消息 → 渲染溯源和推荐"""
-    # 递增溯源按钮计数器，确保 key 唯一
     st.session_state["_source_btn_counter"] = st.session_state.get("_source_btn_counter", 0) + 1
     btn_key = f"source_new_{st.session_state['_source_btn_counter']}"
 
@@ -458,9 +457,49 @@ def _process_chat(prompt):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("🧠 DeepSeek 正在思考..."):
-            ai_msg, source_pages, recommended = call_chat_api(prompt)
-            # 清理 AI 输出中残留的 HTML 标签（如 <br>）
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+        chat_result = {"ai_msg": None, "source_pages": [], "recommended": None, "error": None}
+
+        def _call_api():
+            try:
+                ai_msg, source_pages, recommended = call_chat_api(prompt)
+                chat_result["ai_msg"] = ai_msg
+                chat_result["source_pages"] = source_pages
+                chat_result["recommended"] = recommended
+            except Exception as e:
+                chat_result["error"] = str(e)
+
+        t = threading.Thread(target=_call_api, daemon=True)
+        t.start()
+
+        steps = [
+            (10, "🔍 正在检索相关财报信息..."),
+            (30, "🔍 正在检索相关财报信息..."),
+            (50, "🧠 AI 正在分析财务数据..."),
+            (75, "🧠 AI 正在整理分析结论..."),
+            (90, "📝 正在生成回答..."),
+        ]
+        for pct, text in steps:
+            progress_bar.progress(pct, text=text)
+            t.join(timeout=8)
+            if not t.is_alive():
+                break
+
+        t.join(timeout=60)
+
+        if chat_result["error"]:
+            progress_bar.empty()
+            progress_text.empty()
+            st.error(f"❌ 请求失败：{chat_result['error']}")
+            return
+
+        ai_msg = chat_result["ai_msg"]
+        source_pages = chat_result["source_pages"]
+        recommended = chat_result["recommended"]
+
+        if ai_msg:
+            progress_bar.progress(100, text="✅ 回答完成！")
             ai_msg = _clean_ai_message(ai_msg)
             st.markdown(ai_msg)
             msg_idx = len(st.session_state.messages)
@@ -471,9 +510,12 @@ def _process_chat(prompt):
                 "recommended": recommended,
                 "source_btn_key": btn_key,
             })
-
             _render_source_images(source_pages, btn_key)
             _render_recommended(recommended, msg_idx)
+        else:
+            progress_bar.empty()
+            progress_text.empty()
+            st.error("❌ 未收到有效回答")
 
 
 # ============================================================

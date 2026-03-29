@@ -19,6 +19,8 @@ def client():
          patch("financial_report_ai_assistant.api.main.build_vector_store") as mock_build, \
          patch("financial_report_ai_assistant.api.main.query_rag_with_source") as mock_rag, \
          patch("financial_report_ai_assistant.api.main.run_agent_query") as mock_agent, \
+         patch("financial_report_ai_assistant.core.agent.run_lightweight_query") as mock_lightweight, \
+         patch("financial_report_ai_assistant.core.agent.is_simple_query", return_value=False) as mock_is_simple, \
          patch("financial_report_ai_assistant.api.analysis.query_rag") as mock_analysis_rag, \
          patch("financial_report_ai_assistant.api.analysis.ChatPromptTemplate") as mock_prompt_cls, \
          patch("financial_report_ai_assistant.api.analysis.StrOutputParser") as mock_parser_cls:
@@ -30,7 +32,7 @@ def client():
             "status": "success"
         }
         mock_build.return_value = True
-        mock_rag.return_value = {"context": "检索到的上下文", "page_num": 1}
+        mock_rag.return_value = {"context": "检索到的上下文", "page_num": 1, "source_pages": [1]}
         mock_agent.return_value = "根据分析，答案是X。"
         mock_analysis_rag.return_value = "检索到的摘要上下文"
         # mock chain 管道：prompt | llm | parser
