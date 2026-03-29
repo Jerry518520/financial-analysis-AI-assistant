@@ -284,20 +284,23 @@ def executor_node(state: AgentState):
     new_calls = []
     new_results = []
 
-    try:
+    def _parse_and_execute(raw_text: str) -> bool:
+        """尝试解析 LLM 返回的工具调用 JSON 并执行。返回是否成功执行了工具。"""
+        nonlocal new_calls, new_results
+        
         # 先检查是否 FINISH
-        if "FINISH" in response_text and not re.search(r'\[[\s\S]*"name"[\s\S]*\]', response_text):
-            return {"should_continue": False}
+        if "FINISH" in raw_text and not re.search(r'\[[\s\S]*"name"[\s\S]*\]', raw_text):
+            return True  # FINISH 信号，算"成功"
 
         # 尝试解析 JSON 数组
-        array_match = re.search(r'\[[\s\S]*\]', response_text)
+        array_match = re.search(r'\[[\s\S]*\]', raw_text)
         if not array_match:
             # 兜底：尝试解析单个 JSON 对象
-            array_match = re.search(r'\{[\s\S]*\}', response_text)
+            array_match = re.search(r'\{[\s\S]*\}', raw_text)
             if array_match:
                 tool_calls_json = [json.loads(array_match.group())]
             else:
-                return {"should_continue": False}
+                return False  # 无法解析
         else:
             tool_calls_json = json.loads(array_match.group())
 
@@ -306,7 +309,7 @@ def executor_node(state: AgentState):
             tool_args = tool_call.get("args", {})
 
             if tool_name == "FINISH":
-                return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
+                return True
 
             if tool_name not in tool_map:
                 new_results.append(f"未知工具: {tool_name}")
@@ -322,11 +325,40 @@ def executor_node(state: AgentState):
                 new_results.append(f"工具 {tool_name} 执行出错: {str(e)}")
                 new_calls.append(f"{tool_name} 执行出错")
 
-    except Exception as e:
-        new_results.append(f"JSON 解析出错: {str(e)}，原始返回: {response_text[:200]}")
-        # JSON 解析失败 → 无法继续，显式停止循环
-        return {"should_continue": False, "tool_results": new_results}
+        return len(new_calls) > 0
 
+    try:
+        success = _parse_and_execute(response_text)
+    except Exception as e:
+        success = False
+        new_results.append(f"JSON 解析出错: {str(e)}，原始返回: {response_text[:200]}")
+
+    # JSON 解析失败时，让 LLM 重新生成一次严格格式（提高容错性）
+    if not success:
+        print(f"⚠️ executor 首次解析失败，尝试重试... 原始返回: {response_text[:200]}")
+        retry_prompt = f"""你刚才的输出格式有误。请严格按以下要求重新输出：
+
+要求：输出一个合法的 JSON 数组，每个元素包含 "name" 和 "args" 字段。
+如果不需要调用工具，输出：[{{"name": "FINISH", "args": {{}}}}]
+
+用户问题：{state['question']}
+背景信息：{state['context'][:3000]}
+
+只输出 JSON 数组，不要任何其他文字！"""
+        retry_response = llm.invoke(retry_prompt)
+        retry_text = retry_response.content.strip()
+        try:
+            # 清理可能的 markdown 代码块包裹
+            retry_text = re.sub(r'^```(?:json)?\s*', '', retry_text)
+            retry_text = re.sub(r'\s*```$', '', retry_text)
+            success = _parse_and_execute(retry_text)
+        except Exception as e:
+            new_results.append(f"重试也失败: {str(e)}")
+
+    # FINISH 信号
+    if success and not new_calls:
+        return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
+    
     # 如果没有成功调用任何工具，停止循环
     if not new_calls:
         return {"should_continue": False}
@@ -421,6 +453,7 @@ def answer_node(state: AgentState):
 3. 包含具体的数值和计算结果
 4. 如有需要，给出分析和建议
 5. 使用 Markdown 格式
+6. 即使背景信息中没有直接相关的数据，也要基于已有信息给出尽可能有用的分析，说明哪些数据缺失，而不是简单地说"未找到"
 """
     
     response = llm.invoke(answer_prompt)
@@ -508,9 +541,18 @@ _SIMPLE_QUERY_PATTERNS = [
     r"列出", r"写出来", r"给出",
     r"营收", r"收入", r"利润", r"净利润", r"毛利",
     r"资产", r"负债", r"现金流", r"现金",
-    r"ROE", r"ROA", r"EPS", r"PE",
     r"毛利率", r"净利率", r"资产负债率", r"流动比率", r"速动比率",
     r"周转率", r"股息",
+]
+
+# 需要 Agent 深度分析的指标（涉及数值计算或复杂推理）
+_NEEDS_AGENT_PATTERNS = [
+    r"\bEPS\b", r"\bPE\b", r"\bROE\b", r"\bROA\b",
+    r"影响", r"原因", r"为什么", r"前景", r"风险", r"评估",
+    r"分析", r"对比", r"趋势", r"预测", r"建议", r"策略", r"综合", r"总结",
+    r"同比增长", r"环比", r"增长率",
+    r"盈利能力", r"偿债能力", r"运营能力",
+    r"每股", r"股本",
 ]
 
 def is_simple_query(question: str) -> bool:
@@ -518,9 +560,9 @@ def is_simple_query(question: str) -> bool:
     q = question.strip()
     if len(q) > 50:
         return False
-    complex_keywords = ["分析", "对比", "趋势", "前景", "评估", "风险", "综合", "总结", "预测", "建议", "策略"]
-    for kw in complex_keywords:
-        if kw in q:
+    # 先检查是否匹配需要 Agent 的模式
+    for pattern in _NEEDS_AGENT_PATTERNS:
+        if _re.search(pattern, q):
             return False
     for pattern in _SIMPLE_QUERY_PATTERNS:
         if _re.search(pattern, q):

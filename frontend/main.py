@@ -278,7 +278,7 @@ hr, [data-testid="stDivider"] {
 # ============================================================
 def _auto_scroll():
     """通过 components.html 注入 JS 实现真正的自动滚动 + 强制输入框颜色"""
-    st.html("""
+    components.html("""
     <script>
     function fixAndScroll() {
         var doc = document;
@@ -319,7 +319,7 @@ def _auto_scroll():
     // 15秒后停止观察，避免性能消耗
     setTimeout(function() { observer.disconnect(); }, 15000);
     </script>
-    """)
+    """, height=0)
 
 
 # ============================================================
@@ -376,10 +376,12 @@ def call_chat_api(prompt):
 
     if res.status_code == 200:
         data = res.json()
-        ai_msg = data.get("answer", "错误")
+        ai_msg = data.get("answer", "") or ""
         source_pages = data.get("source_pages", [data.get("source_page", None)])
         # 确保列表中的 None 被过滤掉
         source_pages = [p for p in source_pages if p is not None]
+        if not ai_msg.strip():
+            ai_msg = "⚠️ 后端返回了空回答，请检查服务器日志或尝试重新提问。"
         recommended = get_recommended_questions(prompt)
         return ai_msg, source_pages, recommended
     else:
@@ -715,6 +717,9 @@ else:
                 st.error(summary_result["error"])
 
         if st.session_state.summary:
+            # Bug 1 修复：摘要 Markdown 需要先转换为 HTML
+            import markdown as _md_lib
+            summary_html = _md_lib.markdown(st.session_state.summary, extensions=['tables', 'fenced_code'])
             st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, #1a1d29 0%, #162032 100%);
@@ -725,7 +730,7 @@ else:
                 line-height: 1.8;
                 color: #cbd5e1;
             ">
-                {st.session_state.summary}
+                {summary_html}
             </div>
             """, unsafe_allow_html=True)
 
