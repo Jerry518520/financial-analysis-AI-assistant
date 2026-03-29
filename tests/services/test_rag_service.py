@@ -139,10 +139,11 @@ class TestGetDevice:
         assert get_device() == "cuda"
 
     @patch("financial_report_ai_assistant.services.rag_service.torch.cuda.is_available")
-    def test_cpu_fallback(self, mock_cuda):
+    def test_no_cuda_raises_error(self, mock_cuda):
         mock_cuda.return_value = False
         from financial_report_ai_assistant.services.rag_service import get_device
-        assert get_device() == "cpu"
+        with pytest.raises(RuntimeError, match="CUDA GPU"):
+            get_device()
 
 
 # ============================================================

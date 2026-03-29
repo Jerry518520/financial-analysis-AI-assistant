@@ -7038,8 +7038,8 @@ pyyaml = ["pyyaml"]
 
 [package.source]
 type = "legacy"
-url = "https://mirrors.aliyun.com/pypi/simple"
-reference = "aliyun"
+url = "https://mirrors.aliyun.com/pytorch-wheels/cu126/"
+reference = "pytorch-cu126"
 
 [[package]]
 name = "tornado"
@@ -8335,4 +8335,4 @@ reference = "aliyun"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "c53b05c5883e571f85d2b64cdc27f2e8f92ed331eb82233e60e9d2417f1dc6b4"
+content-hash = "4bf2c150c474c61a175daeb2fb65c830a9522ae710075c829d97fb1e3f781c11"
