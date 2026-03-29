@@ -10,7 +10,7 @@ import uvicorn
 import os
 import hashlib
 import io
-import base64
+import asyncio
 
 # 导入所有服务
 from financial_report_ai_assistant.services.document_parser import parse_pdf_bytes
@@ -69,7 +69,8 @@ async def upload_financial_report(file: UploadFile = File(...)):
         print(f"📝 解析结果: 文本长度 = {len(full_text)} 字符")
         if full_text:
             print("🚀 开始构建 RAG 向量库...")
-            success = build_vector_store(full_text, pdf_hash=file_hash)
+            # 使用 asyncio.to_thread 避免阻塞事件循环（GPU 计算 + 模型加载耗时较长）
+            success = await asyncio.to_thread(build_vector_store, full_text, file_hash)
             if success:
                 print(">>> RAG 索引构建成功！")
             else:
@@ -83,7 +84,7 @@ async def upload_financial_report(file: UploadFile = File(...)):
             
         return {"filename": file.filename, "analysis_result": result}
     except Exception as e:
-        return {"error": f"解析失败: {str(e)}"}
+        return JSONResponse(status_code=500, content={"error": f"解析失败: {str(e)}"})
 
 
 @app.post("/preview-chunks")
@@ -106,17 +107,22 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
 
 @app.post("/chat")
 async def chat_with_report(request: ChatRequest):
-    rag_result = query_rag_with_source(request.question)
+    try:
+        # RAG 检索也涉及 FAISS 操作，放入线程池
+        rag_result = await asyncio.to_thread(query_rag_with_source, request.question)
 
-    relevant_context = rag_result["context"]
-    page_num = rag_result["page_num"]
+        relevant_context = rag_result["context"]
+        page_num = rag_result["page_num"]
 
-    print(f"🔍 用户问: {request.question}")
-    print(f"� RAG 返回页码: {page_num}")
+        print(f"🔍 用户问: {request.question}")
+        print(f"📄 RAG 返回页码: {page_num}")
 
-    answer = run_agent_query(query=request.question, context=relevant_context)
+        # Agent 推理涉及多次 LLM API 调用，放入线程池避免阻塞
+        answer = await asyncio.to_thread(run_agent_query, request.question, relevant_context)
 
-    return {"answer": answer, "source_page": page_num}
+        return {"answer": answer, "source_page": page_num}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
 
 @app.get("/highlight")
 async def highlight_page(
@@ -162,7 +168,7 @@ async def highlight_page(
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {"error": f"渲染失败: {str(e)}"}
+        return JSONResponse(status_code=500, content={"error": f"渲染失败: {str(e)}"})
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

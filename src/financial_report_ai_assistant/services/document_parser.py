@@ -175,7 +175,9 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
             # 发送给 LlamaParse
             print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
             api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-            if not api_key: return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
+            if not api_key:
+                doc.close()
+                return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
             
             # 自动检测文档语言
             detected_lang = _detect_language(doc)
@@ -197,8 +199,6 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     os.remove(subset_filename)
                 except:
                     pass
-
-        doc.close()
 
         # 4. 合并所有内容 (按页码顺序)
         final_full_text = []
@@ -223,3 +223,9 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
     except Exception as e:
         print(f"❌ 解析失败: {e}")
         return {"status": "error", "error": str(e)}
+    finally:
+        # 确保 doc 资源被释放（即使在 LlamaParse 等异常路径上）
+        try:
+            doc.close()
+        except:
+            pass

@@ -193,7 +193,8 @@ class TestQueryRag:
         mock_store = MagicMock()
         mock_doc = MagicMock()
         mock_doc.page_content = "测试文档内容"
-        mock_store.similarity_search.return_value = [mock_doc]
+        # similarity_search_with_score 返回 [(doc, score)] 元组列表
+        mock_store.similarity_search_with_score.return_value = [(mock_doc, 0.9)]
 
         import financial_report_ai_assistant.services.rag_service as rag_module
         rag_module.vector_store = mock_store
@@ -224,7 +225,8 @@ class TestQueryRagWithSource:
         mock_doc = MagicMock()
         mock_doc.page_content = "营收1000万"
         mock_doc.metadata = {"page_num": 5}
-        mock_store.similarity_search.return_value = [mock_doc]
+        # similarity_search_with_score 返回 [(doc, score)] 元组列表
+        mock_store.similarity_search_with_score.return_value = [(mock_doc, 0.95)]
 
         import financial_report_ai_assistant.services.rag_service as rag_module
         rag_module.vector_store = mock_store
@@ -233,12 +235,14 @@ class TestQueryRagWithSource:
         result = query_rag_with_source("营收是多少")
         assert result["context"] == "营收1000万"
         assert result["page_num"] == 5
+        assert "source_pages" in result
 
     @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
     def test_empty_search_results(self, mock_load):
         """搜索结果为空"""
         mock_store = MagicMock()
-        mock_store.similarity_search.return_value = []
+        # 返回空列表（similarity_search_with_score 结果为空）
+        mock_store.similarity_search_with_score.return_value = []
 
         import financial_report_ai_assistant.services.rag_service as rag_module
         rag_module.vector_store = mock_store
@@ -254,7 +258,8 @@ class TestQueryRagWithSource:
         mock_doc = MagicMock()
         mock_doc.page_content = "内容"
         mock_doc.metadata = {}  # 缺少 page_num
-        mock_store.similarity_search.return_value = [mock_doc]
+        # similarity_search_with_score 返回 [(doc, score)] 元组列表
+        mock_store.similarity_search_with_score.return_value = [(mock_doc, 0.5)]
 
         import financial_report_ai_assistant.services.rag_service as rag_module
         rag_module.vector_store = mock_store

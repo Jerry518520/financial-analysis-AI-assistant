@@ -114,7 +114,7 @@ class TestUpload:
         parse_pdf_bytes.side_effect = Exception("解析失败")
 
         resp = client.post("/upload", files={"file": ("bad.pdf", io.BytesIO(b"not a pdf"), "application/pdf")})
-        assert resp.status_code == 200
+        assert resp.status_code == 500
         assert "error" in resp.json()
 
         parse_pdf_bytes.side_effect = None

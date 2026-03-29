@@ -4,42 +4,79 @@ from financial_report_ai_assistant.services.rag_service import query_rag
 from financial_report_ai_assistant.services.ai_chat import llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+import asyncio
 
 router = APIRouter()
 
 class AnalysisRequest(BaseModel):
     focus: str = "general" # general, financial, risk, business
 
+# 不同 focus 对应的检索关键词
+FOCUS_QUERIES = {
+    "general": [
+        "Financial Highlights and Key Figures",
+        "主要财务数据和指标",
+        "Business Overview and Outlook",
+        "公司业务概要",
+    ],
+    "financial": [
+        "Financial Highlights and Key Figures",
+        "主要财务数据和指标",
+        "Revenue and Profit Analysis",
+        "收入和利润分析",
+        "Balance Sheet",
+        "合并资产负债表",
+    ],
+    "risk": [
+        "Risk Factors",
+        "风险因素",
+        "风险管理",
+        "Liquidity and Capital Resources",
+    ],
+    "business": [
+        "Business Overview and Outlook",
+        "公司业务概要",
+        "Management Discussion and Analysis (MD&A)",
+        "管理层讨论与分析",
+    ],
+}
+
+# 上下文最大字符数限制（防止超出 DeepSeek 上下文窗口）
+MAX_CONTEXT_CHARS = 30000
+
 @router.post("/analyze/summary")
 async def generate_report_summary(request: AnalysisRequest):
     """
     生成财报的核心摘要
     """
-    # 1. 针对摘要任务，我们需要检索更广泛的关键信息
-    # 构造几个核心查询词，分别检索，然后合并上下文
-    search_queries = [
-        "Financial Highlights and Key Figures",
-        "Management Discussion and Analysis (MD&A)",
-        "Business Overview and Outlook",
-        "Risk Factors",
-        "主要财务数据和指标",
-        "管理层讨论与分析",
-        "公司业务概要"
-    ]
+    # 1. 根据 focus 选择检索关键词
+    search_queries = FOCUS_QUERIES.get(request.focus, FOCUS_QUERIES["general"])
     
     contexts = []
     for q in search_queries:
         # 每个 query 找 top 2，避免上下文过长
-        ctx = query_rag(q, top_k=2)
+        ctx = await asyncio.to_thread(query_rag, q, 2)
         if ctx and "系统提示：知识库尚未建立" not in ctx:
             contexts.append(ctx)
             
     if not contexts:
         return {"summary": "无法生成摘要：知识库尚未建立或未检索到有效信息。请先上传并解析财报。"}
         
+    # 拼接上下文，截断到安全范围内
     full_context = "\n---\n".join(contexts)
+    if len(full_context) > MAX_CONTEXT_CHARS:
+        print(f"⚠️ 上下文长度 {len(full_context)} 超过限制 {MAX_CONTEXT_CHARS}，进行截断")
+        full_context = full_context[:MAX_CONTEXT_CHARS] + "\n\n[... 上下文已截断 ...]"
     
-    # 2. 调用 LLM 生成摘要
+    # 2. 根据 focus 调整生成提示
+    focus_instructions = {
+        "general": "请涵盖核心财务指标、经营亮点、风险提示和未来展望。",
+        "financial": "请重点分析核心财务指标（营收、净利润、毛利率等）及其同比变化趋势。",
+        "risk": "请重点识别和分析主要风险因素、风险管理策略。",
+        "business": "请重点描述业务概况、经营亮点和未来展望。",
+    }
+    focus_hint = focus_instructions.get(request.focus, focus_instructions["general"])
+    
     template = """
     你是一位资深的金融分析师。请根据以下从财报中检索到的片段，为用户生成一份结构清晰的【财报核心摘要】。
     
@@ -54,6 +91,8 @@ async def generate_report_summary(request: AnalysisRequest):
     3. **风险提示**：如果有提及，列出主要的风险因素。
     4. **未来展望**：管理层对未来的预期。
     
+    【分析重点】：{focus_hint}
+    
     请使用 Markdown 格式输出，使用小标题（###）分隔不同部分。如果某些信息在片段中未找到，请直接省略该部分，不要编造。
     保持语言专业、客观、精炼。
     """
@@ -63,7 +102,7 @@ async def generate_report_summary(request: AnalysisRequest):
     
     try:
         print("💡 正在生成摘要...")
-        summary = chain.invoke({"context": full_context})
+        summary = await asyncio.to_thread(chain.invoke, {"context": full_context, "focus_hint": focus_hint})
         return {"summary": summary}
     except Exception as e:
         print(f"❌ 摘要生成失败: {e}")

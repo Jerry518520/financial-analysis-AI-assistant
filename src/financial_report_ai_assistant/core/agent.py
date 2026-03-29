@@ -1,7 +1,6 @@
 from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import ToolNode
 from typing import TypedDict, List, Optional, Union, Annotated
 import operator
 import os
@@ -22,8 +21,8 @@ class AgentState(TypedDict):
     question: str
     context: str
     plan: List[str]
-    tool_calls: List[str]
-    tool_results: List[str]
+    tool_calls: Annotated[list[str], operator.add]
+    tool_results: Annotated[list[str], operator.add]
     reflection: str
     final_answer: str
     iteration: int
@@ -226,18 +225,22 @@ def planner_node(state: AgentState):
     
     return {"plan": plan, "iteration": 0}
 
+def _get_tool_map():
+    """构建工具名称 → 工具函数的映射表"""
+    tools = get_tools()
+    return {tool.name: tool for tool in tools}
+
 def executor_node(state: AgentState):
     """执行器：根据当前计划调用工具"""
     llm = create_llm()
     if not llm:
         return {"tool_results": ["错误：API Key 未配置"]}
-    
-    tools = get_tools()
-    tool_node = ToolNode(tools)
-    
+
+    tool_map = _get_tool_map()
+
     current_plan = state.get("plan", [])
     previous_results = state.get("tool_results", [])
-    
+
     executor_prompt = f"""你是一位专业的金融分析师。根据用户的【问题】和【背景信息】，决定需要调用哪些工具来完成任务。
 
 【用户问题】：{state['question']}
@@ -255,6 +258,9 @@ def executor_node(state: AgentState):
 1. 工具名称
 2. 工具参数（从背景信息中提取具体数值）
 
+可用的工具列表：
+{chr(10).join(f"- {name}: {tool.description}" for name, tool in tool_map.items())}
+
 如果需要调用工具，输出格式如下（JSON格式）：
 {{"name": "工具函数名", "args": {{"参数名": 参数值}}}}
 
@@ -263,25 +269,30 @@ def executor_node(state: AgentState):
 
 只输出JSON，不要其他内容。
 """
-    
+
     response = llm.invoke(executor_prompt)
     response_text = response.content.strip()
-    
+
     import json
     import re
-    
+
     try:
         if "FINISH" in response_text:
             return {"should_continue": False}
-        
+
         json_match = re.search(r'\{[\s\S]*\}', response_text)
         if json_match:
             tool_call = json.loads(json_match.group())
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("args", {})
-            
-            result = tool_node.invoke({"tool": tool_name, "tool_input": tool_args})
-            
+
+            if tool_name not in tool_map:
+                return {"tool_results": [f"未知工具: {tool_name}"]}
+
+            # 直接调用 tool.invoke()，ToolNode 只能在 LangGraph 图内部自动使用
+            tool_func = tool_map[tool_name]
+            result = tool_func.invoke(tool_args)
+
             return {
                 "tool_calls": [f"{tool_name}({tool_args})"],
                 "tool_results": [str(result)],
@@ -289,7 +300,7 @@ def executor_node(state: AgentState):
             }
     except Exception as e:
         return {"tool_results": [f"执行出错: {str(e)}"]}
-    
+
     return {"should_continue": False}
 
 def reflection_node(state: AgentState):
@@ -327,16 +338,19 @@ def reflection_node(state: AgentState):
     
     response = llm.invoke(reflection_prompt)
     reflection = response.content.strip()
-    
-    # 修复：明确处理 CONTINUE/RETRY/其他情况
-    if "FINISH" in reflection or "RETRY" in reflection:
+
+    # 处理三种判断结果
+    if "FINISH" in reflection:
         should_continue = False
+    elif "RETRY" in reflection and iteration < MAX_ITERATIONS:
+        # RETRY 表示结果异常，需要重新执行（回到 executor 重试）
+        should_continue = True
     elif "CONTINUE" in reflection and iteration < MAX_ITERATIONS:
         should_continue = True
     else:
-        # 其他情况：达到迭代上限或无法判断，都停止
+        # 达到迭代上限或无法判断，都停止
         should_continue = False
-    
+
     return {"reflection": reflection, "should_continue": should_continue}
 
 def answer_node(state: AgentState):

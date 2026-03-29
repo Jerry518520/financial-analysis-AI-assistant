@@ -206,7 +206,7 @@ class TestReflectionNode:
 
     @patch("financial_report_ai_assistant.core.agent.create_llm")
     def test_retry_decision(self, mock_create_llm):
-        """LLM 判断 RETRY"""
+        """LLM 判断 RETRY 时应继续（重试异常结果）"""
         mock_llm = MagicMock()
         mock_llm.invoke.return_value = _mock_llm_response("RETRY\n数据异常，需要重新提取")
         mock_create_llm.return_value = mock_llm
@@ -220,7 +220,8 @@ class TestReflectionNode:
         }
         result = reflection_node(state)
 
-        assert result["should_continue"] is False
+        # RETRY 表示结果异常需要重新执行，应继续循环
+        assert result["should_continue"] is True
 
     @patch("financial_report_ai_assistant.core.agent.create_llm")
     def test_no_api_key(self, mock_create_llm):
