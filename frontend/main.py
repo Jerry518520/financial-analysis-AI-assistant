@@ -274,16 +274,21 @@ hr, [data-testid="stDivider"] {
 
 # ============================================================
 # 自动滚动 + 强制输入框颜色修复（通过 components.html 注入 JS）
-# st.markdown 的 <script> 不会执行，必须用 components.html
+# components.html 创建 iframe，必须用 parent.document 访问主页面 DOM
 # ============================================================
 def _auto_scroll():
-    """通过 components.html 注入 JS 实现真正的自动滚动 + 强制输入框颜色"""
+    """通过 components.html 注入 JS 实现真正的自动滚动 + 强制输入框颜色
+    
+    关键：components.html 的 JS 运行在 iframe 中，document 是 iframe 文档，
+    必须用 parent.document 才能操作 Streamlit 主页面！
+    """
     components.html("""
     <script>
     function fixAndScroll() {
-        var doc = document;
+        // 必须用 parent.document！iframe 里的 document 是隔离的
+        var doc = parent.document;
         
-        // 1. 强制修复聊天输入框文字颜色（覆盖 Streamlit 内联样式）
+        // 1. 强制修复聊天输入框文字颜色
         var inputs = doc.querySelectorAll(
             '[data-testid="stChatInput"] textarea, ' +
             '[data-testid="stChatInput"] input, ' +
@@ -295,28 +300,30 @@ def _auto_scroll():
             el.style.setProperty('-webkit-text-fill-color', '#e2e8f0', 'important');
         });
         
-        // 2. 滚动到聊天底部
-        var chatContainer = doc.querySelector('[data-testid="stChatMessageContainer"]');
-        if (chatContainer) {
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
-        }
+        // 2. 滚动到页面底部（Streamlit 主容器是 section.main）
+        var mainSections = doc.querySelectorAll('section.main');
+        mainSections.forEach(function(section) {
+            section.scrollTop = section.scrollHeight;
+        });
+        
+        // 备用：也尝试直接滚 window
+        parent.window.scrollTo({ top: parent.document.body.scrollHeight, behavior: 'smooth' });
     }
     
-    // 立即执行多次（Streamlit 渲染有延迟）
-    setTimeout(fixAndScroll, 100);
-    setTimeout(fixAndScroll, 300);
-    setTimeout(fixAndScroll, 600);
+    // 立即执行 + 延迟重试（Streamlit 渲染有延迟）
+    setTimeout(fixAndScroll, 50);
+    setTimeout(fixAndScroll, 200);
+    setTimeout(fixAndScroll, 500);
     setTimeout(fixAndScroll, 1000);
     setTimeout(fixAndScroll, 2000);
     
-    // MutationObserver 监听 DOM 变化，确保新内容也能触发滚动
+    // MutationObserver 监听 DOM 变化
     var observer = new MutationObserver(function() {
         fixAndScroll();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(parent.document.body, { childList: true, subtree: true });
     
-    // 15秒后停止观察，避免性能消耗
+    // 15秒后停止观察
     setTimeout(function() { observer.disconnect(); }, 15000);
     </script>
     """, height=0)
@@ -809,3 +816,4 @@ else:
         # ========== 正常输入 ==========
         if prompt := st.chat_input("请输入问题..."):
             _process_chat(prompt)
+            _auto_scroll()

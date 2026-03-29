@@ -210,7 +210,7 @@ tests/integration_test.py::test_chat_calculation
     warnings.warn(
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-====================== 167 passed, 9 warnings in 25.15s =======================
+================= 167 passed, 9 warnings in 127.82s (0:02:07) =================
 poetry : sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
 所在位置 行:1 字符: 54
 + ... ort-ai-assistant; poetry run pytest tests/ -v --tb=short 2>&1 | Out-F ...
