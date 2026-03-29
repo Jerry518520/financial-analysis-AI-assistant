@@ -43,6 +43,8 @@ async def generate_report_summary(request: AnalysisRequest):
     template = """
     你是一位资深的金融分析师。请根据以下从财报中检索到的片段，为用户生成一份结构清晰的【财报核心摘要】。
     
+    【重要】禁止任何开场白、问候语或自我介绍，直接从正文内容开始。
+    
     【检索到的财报片段】：
     {context}
     
