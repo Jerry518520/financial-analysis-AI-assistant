@@ -273,75 +273,33 @@ hr, [data-testid="stDivider"] {
 
 
 # ============================================================
-# 自动滚动 + 强制输入框颜色修复（通过 components.html 注入 JS）
-# components.html 创建 iframe，必须用 parent.document 访问主页面 DOM
+# 自动滚动 — 通过 components.html 注入 JS
+# components.html 的 JS 运行在 iframe 中，必须用 parent.document
 # ============================================================
 def _auto_scroll():
-    """通过 components.html 注入 JS 实现真正的自动滚动 + 强制输入框颜色
+    """在回答渲染完成后，滚动到页面底部。
     
-    关键：components.html 的 JS 运行在 iframe 中，document 是 iframe 文档，
-    必须用 parent.document 才能操作 Streamlit 主页面！
+    只做延迟滚动，不用 MutationObserver（避免渲染过程中反复滚动导致抽动）。
     """
     components.html("""
-    <script>
-    function fixAndScroll() {
-        // 必须用 parent.document！iframe 里的 document 是隔离的
-        var doc = parent.document;
-        
-        // 1. 强制修复聊天输入框文字颜色
-        var inputs = doc.querySelectorAll(
-            '[data-testid="stChatInput"] textarea, ' +
-            '[data-testid="stChatInput"] input, ' +
-            '[data-testid="stChatInput"] [class*="textInput"]'
-        );
-        inputs.forEach(function(el) {
-            el.style.setProperty('color', '#e2e8f0', 'important');
-            el.style.setProperty('caret-color', '#00d4aa', 'important');
-            el.style.setProperty('-webkit-text-fill-color', '#e2e8f0', 'important');
-        });
-        
-        // 2. 自动滚动 — 用 getScrollParent 找到真正产生滚动的容器
-        var chatMessages = doc.querySelectorAll('[data-testid="stChatMessage"]');
-        if (chatMessages.length > 0) {
-            var lastMsg = chatMessages[chatMessages.length - 1];
-            var el = lastMsg;
-            var scrollParent = null;
-            while (el) {
-                var style = doc.defaultView.getComputedStyle(el);
-                var overflow = (style.overflow || '') + ' ' + (style.overflowY || '');
-                if (/(auto|scroll)/.test(overflow)) {
-                    scrollParent = el;
-                }
-                el = el.parentElement;
-            }
-            if (scrollParent) {
-                scrollParent.scrollTop = scrollParent.scrollHeight;
-            } else {
-                // 兜底：滚 window
-                doc.defaultView.scrollTo({ top: doc.body.scrollHeight, behavior: 'smooth' });
-            }
-            // 额外保险：让最后一条消息滚入视野
-            lastMsg.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        }
-    }
+<script>
+function scrollToBottom() {
+    var doc = parent.document;
+    var msgs = doc.querySelectorAll('[data-testid="stChatMessage"]');
+    if (msgs.length === 0) return;
     
-    // 立即执行 + 延迟重试（Streamlit 渲染有延迟）
-    setTimeout(fixAndScroll, 50);
-    setTimeout(fixAndScroll, 200);
-    setTimeout(fixAndScroll, 500);
-    setTimeout(fixAndScroll, 1000);
-    setTimeout(fixAndScroll, 2000);
+    var last = msgs[msgs.length - 1];
     
-    // MutationObserver 监听 DOM 变化
-    var observer = new MutationObserver(function() {
-        fixAndScroll();
-    });
-    observer.observe(parent.document.body, { childList: true, subtree: true });
-    
-    // 15秒后停止观察
-    setTimeout(function() { observer.disconnect(); }, 15000);
-    </script>
-    """, height=0)
+    // scrollIntoView 是最可靠的跨浏览器方案
+    last.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+// 延迟执行，覆盖 Streamlit 的异步渲染延迟
+setTimeout(scrollToBottom, 300);
+setTimeout(scrollToBottom, 1500);
+setTimeout(scrollToBottom, 3000);
+</script>
+""", height=0)
 
 
 # ============================================================

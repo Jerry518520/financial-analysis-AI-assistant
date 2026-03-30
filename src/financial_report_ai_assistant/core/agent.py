@@ -191,7 +191,8 @@ def create_llm():
         model="deepseek-chat",
         api_key=api_key,
         base_url="https://api.deepseek.com",
-        temperature=0.1
+        temperature=0.1,
+        max_tokens=1024,
     )
 
 # ==================== Agent 核心逻辑 ====================
@@ -259,26 +260,25 @@ def executor_node(state: AgentState):
 【已完成的工具调用结果】：
 {chr(10).join(previous_results) if previous_results else "无"}
 
-请分析需要调用哪些工具来推进任务。你可以一次调用多个工具。每个工具调用需要提供：
-1. 工具名称
-2. 工具参数（从背景信息中提取具体数值）
+请分析需要调用哪些工具来推进任务。
+⚠️ 重要：只调用与问题直接相关的工具，不要调用无关工具。一次最多调用 2 个工具。
 
 ⚠️ 参数规则（必须严格遵守）：
 - 所有数值参数必须是具体的数字，如 120000000、0.25
 - 禁止输出表达式（如 5000000000 + 14700000000）
 - 禁止输出 null，如果找不到数据请直接输出 FINISH
-- 可以一次调用多个工具，尽可能批量完成所有计算
+- 如果已完成的工具调用结果中已有足够信息来回答问题，请直接输出 FINISH
 
 可用的工具列表：
 {chr(10).join(f"- {name}: {tool.description}" for name, tool in tool_map.items())}
 
-如果需要调用工具，输出JSON数组格式（可以包含多个调用）：
-[{{"name": "工具函数名", "args": {{"参数名": 参数值}}}}, ...]
+如果需要调用工具，输出JSON数组格式（最多2个调用）：
+[{{"name": "工具函数名", "args": {{"参数名": 参数值}}}}]
 
 如果所有任务都已完成，或不需要再调用工具，请输出：
 [{{"name": "FINISH", "args": {{}}}}]
 
-只输出JSON数组，不要其他内容。
+⚠️ 只输出一个紧凑的 JSON 数组，不要任何其他文字、注释或换行！
 """
 
     response = llm.invoke(executor_prompt)
@@ -329,6 +329,63 @@ def executor_node(state: AgentState):
                 cleaned[key] = value
         return True, cleaned
 
+    def _extract_json_objects(text: str) -> list[dict]:
+        """从文本中安全提取完整的 JSON 对象列表。
+        
+        关键：避免贪婪匹配导致截断的 JSON 被当作完整数组解析。
+        策略：逐个提取完整 JSON 对象（用大括号配对），忽略截断的尾巴。
+        """
+        objects = []
+        i = 0
+        text = text.strip()
+        while i < len(text):
+            # 找下一个 '{'
+            brace_start = text.find('{', i)
+            if brace_start == -1:
+                break
+            # 从这里开始尝试匹配完整的 JSON 对象
+            depth = 0
+            in_string = False
+            escape_next = False
+            j = brace_start
+            while j < len(text):
+                ch = text[j]
+                if escape_next:
+                    escape_next = False
+                    j += 1
+                    continue
+                if ch == '\\' and in_string:
+                    escape_next = True
+                    j += 1
+                    continue
+                if ch == '"' and not escape_next:
+                    in_string = not in_string
+                    j += 1
+                    continue
+                if in_string:
+                    j += 1
+                    continue
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        # 找到完整的 JSON 对象
+                        candidate = text[brace_start:j+1]
+                        try:
+                            obj = json.loads(candidate)
+                            if isinstance(obj, dict) and "name" in obj:
+                                objects.append(obj)
+                        except json.JSONDecodeError:
+                            pass  # 配对但不合法 JSON，跳过
+                        i = j + 1
+                        break
+                j += 1
+            else:
+                # 到达文本末尾仍未闭合 → 截断，停止
+                break
+        return objects
+
     def _parse_and_execute(raw_text: str) -> bool:
         """尝试解析 LLM 返回的工具调用 JSON 并执行。返回是否成功执行了工具。
         
@@ -341,17 +398,22 @@ def executor_node(state: AgentState):
         if "FINISH" in raw_text and not re.search(r'\[[\s\S]*"name"[\s\S]*\]', raw_text):
             return True  # FINISH 信号，算"成功"
 
-        # 尝试解析 JSON 数组
+        # 策略一：先尝试直接解析整个 JSON 数组（理想情况，未截断）
         array_match = re.search(r'\[[\s\S]*\]', raw_text)
-        if not array_match:
-            # 兜底：尝试解析单个 JSON 对象
-            array_match = re.search(r'\{[\s\S]*\}', raw_text)
-            if array_match:
-                tool_calls_json = [json.loads(array_match.group())]
-            else:
-                return False  # 无法解析
-        else:
-            tool_calls_json = json.loads(array_match.group())
+        tool_calls_json = None
+        if array_match:
+            try:
+                parsed = json.loads(array_match.group())
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    tool_calls_json = parsed
+            except json.JSONDecodeError:
+                pass  # 数组不完整，用策略二
+
+        # 策略二：数组解析失败 → 逐个提取完整 JSON 对象（容忍截断）
+        if tool_calls_json is None:
+            tool_calls_json = _extract_json_objects(raw_text)
+            if not tool_calls_json:
+                return False  # 完全无法解析
 
         for tool_call in tool_calls_json:
             tool_name = tool_call.get("name")
