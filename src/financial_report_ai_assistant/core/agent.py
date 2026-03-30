@@ -4,6 +4,7 @@ from langchain_openai import ChatOpenAI
 from typing import TypedDict, List, Optional, Union, Annotated
 import operator
 import os
+from difflib import SequenceMatcher
 from dotenv import load_dotenv
 from financial_report_ai_assistant.services.financial_calculator import (
     calculate_growth_rate, calculate_margin, calculate_roe, format_percentage,
@@ -27,6 +28,7 @@ class AgentState(TypedDict):
     final_answer: str
     iteration: int
     should_continue: bool
+    _executor_continue: bool  # executor 是否成功执行了工具（供 reflection 参考）
 
 # 1. 定义 Tools - 盈利能力
 @tool
@@ -226,18 +228,36 @@ def planner_node(state: AgentState):
     
     return {"plan": plan, "iteration": 0}
 
-def _get_tool_map():
-    """构建工具名称 → 工具函数的映射表"""
+# 模糊匹配阈值：0.7 可容忍 1-2 个字符的拼写错误
+_FUZZY_THRESHOLD = 0.7
+
+
+def _fuzzy_match(name: str, candidates: list[str]) -> str | None:
+    """用 SequenceMatcher 模糊匹配，找到最接近的候选名。"""
+    name_lower = name.lower().replace("_", "")
+    best_score = 0.0
+    best_match = None
+    for candidate in candidates:
+        cand_lower = candidate.lower().replace("_", "")
+        score = SequenceMatcher(None, name_lower, cand_lower).ratio()
+        if score > best_score and score >= _FUZZY_THRESHOLD:
+            best_score = score
+            best_match = candidate
+    return best_match
+
+
+def _get_tool_map_v2():
+    """构建工具名称 → 工具函数的映射表（支持模糊匹配）"""
     tools = get_tools()
-    return {tool.name: tool for tool in tools}
+    return {tool.name: tool for tool in tools}, list({tool.name for tool in tools})
 
 def executor_node(state: AgentState):
     """执行器：根据当前计划调用工具（支持批量调用多个工具）"""
     llm = create_llm()
     if not llm:
-        return {"tool_results": ["错误：API Key 未配置"], "should_continue": False}
+        return {"tool_results": ["错误：API Key 未配置"], "should_continue": False, "_executor_continue": False}
 
-    tool_map = _get_tool_map()
+    tool_map, tool_names = _get_tool_map_v2()
 
     current_plan = state.get("plan", [])
     previous_results = state.get("tool_results", [])
@@ -245,7 +265,7 @@ def executor_node(state: AgentState):
 
     # 全局硬上限：超过 MAX_ITERATIONS 直接停止
     if iteration >= MAX_ITERATIONS:
-        return {"should_continue": False}
+        return {"should_continue": False, "_executor_continue": False}
 
     executor_prompt = f"""你是一位专业的金融分析师。根据用户的【问题】和【背景信息】，决定需要调用哪些工具来完成任务。
 
@@ -422,9 +442,32 @@ def executor_node(state: AgentState):
             if tool_name == "FINISH":
                 return True
 
+            # 1. 工具名模糊匹配：LLM 可能拼错工具名
             if tool_name not in tool_map:
-                new_results.append(f"未知工具: {tool_name}")
-                continue  # 不计入 new_calls
+                matched = _fuzzy_match(tool_name, tool_names)
+                if matched:
+                    new_results.append(f"工具名修正: {tool_name} → {matched}")
+                    tool_name = matched
+                else:
+                    new_results.append(f"未知工具: {tool_name}")
+                    continue  # 不计入 new_calls
+
+            # 2. 参数名模糊匹配：LLM 可能拼错参数名
+            tool_func = tool_map[tool_name]
+            if tool_func.args_schema and hasattr(tool_func.args_schema, 'model_fields'):
+                valid_param_names = list(tool_func.args_schema.model_fields.keys())
+                corrected_args = {}
+                for arg_key, arg_value in tool_args.items():
+                    if arg_key in valid_param_names:
+                        corrected_args[arg_key] = arg_value
+                    else:
+                        # 尝试模糊匹配参数名
+                        matched_param = _fuzzy_match(arg_key, valid_param_names)
+                        if matched_param:
+                            corrected_args[matched_param] = arg_value
+                            new_results.append(f"参数名修正: {tool_name}.{arg_key} → {matched_param}")
+                        # 否则静默忽略无效参数（避免因多余参数报错）
+                tool_args = corrected_args
 
             # 参数验证：拒绝表达式、null、无效值
             valid, cleaned_args = _validate_args(tool_args, tool_name)
@@ -433,7 +476,6 @@ def executor_node(state: AgentState):
                 continue  # 不计入 new_calls
 
             try:
-                tool_func = tool_map[tool_name]
                 result = tool_func.invoke(cleaned_args)
                 new_results.append(str(result))
                 new_calls.append(f"{tool_name}({cleaned_args})")
@@ -476,18 +518,19 @@ def executor_node(state: AgentState):
 
     # FINISH 信号
     if success and not new_calls:
-        return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
+        return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results, "_executor_continue": False}
     
     # 如果没有成功调用任何工具，停止循环并告知 answer 节点
     if not new_calls:
         new_results.append("⚠️ 所有工具调用均失败，无法完成计算。将基于已有信息直接回答。")
-        return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
+        return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results, "_executor_continue": False}
 
     return {
         "tool_calls": new_calls,
         "tool_results": new_results,
         "iteration": iteration + 1,
         "should_continue": True,  # 有工具调用成功 → 交给 reflection 决定是否继续
+        "_executor_continue": True,
     }
 
 def reflection_node(state: AgentState):
@@ -527,15 +570,17 @@ def reflection_node(state: AgentState):
     reflection = response.content.strip()
 
     # 处理三种判断结果
+    # 关键：如果 executor 没有成功执行任何工具，不允许 RETRY/CONTINUE，避免死循环
+    executor_wants_continue = state.get("_executor_continue", True)
     if "FINISH" in reflection:
         should_continue = False
-    elif "RETRY" in reflection and iteration < MAX_ITERATIONS:
-        # RETRY 表示结果异常，需要重新执行（回到 executor 重试）
+    elif "RETRY" in reflection and executor_wants_continue and iteration < MAX_ITERATIONS:
+        # RETRY 仅当 executor 本身还想继续时才允许
         should_continue = True
-    elif "CONTINUE" in reflection and iteration < MAX_ITERATIONS:
+    elif "CONTINUE" in reflection and executor_wants_continue and iteration < MAX_ITERATIONS:
         should_continue = True
     else:
-        # 达到迭代上限或无法判断，都停止
+        # 达到迭代上限或 executor 已停止，都停止
         should_continue = False
 
     return {"reflection": reflection, "should_continue": should_continue}
@@ -640,7 +685,8 @@ def run_agent_query(query: str, context: str = ""):
             "reflection": "",
             "final_answer": "",
             "iteration": 0,
-            "should_continue": True
+            "should_continue": True,
+            "_executor_continue": True,
         }
         
         print(f"🤖 Agent 开始执行 | 问题: {query[:50]}... | 上下文长度: {len(context)} 字符")

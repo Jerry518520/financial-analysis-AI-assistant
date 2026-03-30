@@ -273,31 +273,55 @@ hr, [data-testid="stDivider"] {
 
 
 # ============================================================
-# 自动滚动 — 通过 components.html 注入 JS
-# components.html 的 JS 运行在 iframe 中，必须用 parent.document
+# 自动滚动 — components.html 注入 JS（iframe 内，需 parent.document）
+# 方案：MutationObserver（5秒超时）+ debounce 500ms，防抽动且确保滚到底
 # ============================================================
 def _auto_scroll():
     """在回答渲染完成后，滚动到页面底部。
     
-    只做延迟滚动，不用 MutationObserver（避免渲染过程中反复滚动导致抽动）。
+    用 MutationObserver 监听 Streamlit 渲染完成，配合 debounce 防止抽动。
+    Observer 5秒后自动断开。
     """
     components.html("""
 <script>
-function scrollToBottom() {
+(function() {
     var doc = parent.document;
-    var msgs = doc.querySelectorAll('[data-testid="stChatMessage"]');
-    if (msgs.length === 0) return;
+    var timer = null;
     
-    var last = msgs[msgs.length - 1];
+    function scrollToBottom() {
+        var msgs = doc.querySelectorAll('[data-testid="stChatMessage"]');
+        if (msgs.length === 0) return;
+        var last = msgs[msgs.length - 1];
+        // 用 scrollTop 直接控制滚动容器，比 scrollIntoView 更可控
+        var el = last;
+        while (el && el !== doc.body) {
+            if (el.scrollHeight > el.clientHeight) {
+                el.scrollTop = el.scrollHeight;
+            }
+            el = el.parentElement;
+        }
+    }
     
-    // scrollIntoView 是最可靠的跨浏览器方案
-    last.scrollIntoView({ behavior: 'smooth', block: 'end' });
-}
-
-// 延迟执行，覆盖 Streamlit 的异步渲染延迟
-setTimeout(scrollToBottom, 300);
-setTimeout(scrollToBottom, 1500);
-setTimeout(scrollToBottom, 3000);
+    function debouncedScroll() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(scrollToBottom, 500);
+    }
+    
+    // 延迟启动观察（等当前渲染完成后再监听后续变化）
+    setTimeout(function() {
+        scrollToBottom();
+        
+        var observer = new MutationObserver(debouncedScroll);
+        observer.observe(doc.body, { childList: true, subtree: true });
+        
+        // 5秒后停止观察 + 最后滚一次
+        setTimeout(function() {
+            observer.disconnect();
+            if (timer) clearTimeout(timer);
+            scrollToBottom();
+        }, 5000);
+    }, 300);
+})();
 </script>
 """, height=0)
 
