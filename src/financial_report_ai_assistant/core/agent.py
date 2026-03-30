@@ -467,7 +467,7 @@ _SIMPLE_QUERY_PATTERNS = [
 ]
 
 _NEEDS_AGENT_PATTERNS = [
-    r"\bEPS\b", r"\bPE\b", r"\bROE\b", r"\bROA\b",
+    r"EPS", r"PE", r"ROE", r"ROA",
     r"影响", r"原因", r"为什么", r"前景", r"风险", r"评估",
     r"分析", r"对比", r"趋势", r"预测", r"建议", r"策略", r"综合", r"总结",
     r"同比增长", r"环比", r"增长率",
@@ -510,3 +510,67 @@ def run_lightweight_query(query: str, context: str = "") -> str:
 
     response = llm.invoke(prompt)
     return response.content
+
+
+def generate_recommendations(query: str, answer: str, context: str = "") -> list:
+    """基于对话上下文生成推荐问题
+    
+    Args:
+        query: 用户原始问题
+        answer: AI 的回答
+        context: RAG 检索的上下文（可选）
+    
+    Returns:
+        list: 3 个推荐问题字符串
+    """
+    from financial_report_ai_assistant.services.ai_chat import get_llm
+    llm = get_llm()
+    
+    prompt = f"""基于以下对话，生成 3 个用户最可能想问的后续问题。
+
+【用户问题】：{query}
+
+【AI 回答】：
+{answer[:2000]}  # 截断避免超长
+
+要求：
+1. 问题必须紧扣财报分析主题
+2. 问题应该是有意义的后续追问，而非重复之前的问题
+3. 如果 AI 回答问了"您想计算哪个指标"，推荐问题应该是具体选项
+4. 如果 AI 回答给了数值，推荐问题可以是"为什么增长/下降"、"同比/环比"等延伸
+5. 问题简短，10-20字以内
+6. 严格按 JSON 数组格式输出，不要有任何其他文字
+
+示例输出：
+["净利润同比增长率", "营业收入是多少", "毛利率变化趋势"]
+
+请直接输出 JSON 数组："""
+
+    try:
+        response = llm.invoke(prompt)
+        import json
+        import re
+        
+        # 提取 JSON 数组
+        content = response.content.strip()
+        # 尝试直接解析
+        try:
+            recommendations = json.loads(content)
+        except json.JSONDecodeError:
+            # 尝试提取 JSON 数组
+            match = re.search(r'\[.*?\]', content, re.DOTALL)
+            if match:
+                recommendations = json.loads(match.group())
+            else:
+                # 解析失败，返回默认推荐
+                return ["净利润是多少", "营业收入是多少", "毛利率是多少"]
+        
+        # 验证结果
+        if isinstance(recommendations, list) and len(recommendations) > 0:
+            return recommendations[:3]  # 最多 3 个
+        else:
+            return ["净利润是多少", "营业收入是多少", "毛利率是多少"]
+            
+    except Exception as e:
+        print(f"⚠️ 生成推荐失败: {e}")
+        return ["净利润是多少", "营业收入是多少", "毛利率是多少"]

@@ -15,7 +15,7 @@ import asyncio
 # 导入所有服务
 from financial_report_ai_assistant.services.document_parser import parse_pdf_bytes
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
-from financial_report_ai_assistant.core.agent import run_agent_query
+from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
 from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source
 # 【新增】导入 Analysis 路由
@@ -134,7 +134,11 @@ async def chat_with_report(request: ChatRequest):
             print(f"🤖 Agent 深度分析模式")
             answer = await asyncio.to_thread(run_agent_query, request.question, relevant_context)
 
-        return {"answer": answer, "source_page": page_num, "source_pages": source_pages}
+        # 生成推荐问题（基于回答动态生成）
+        recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, relevant_context)
+        print(f"💡 推荐问题: {recommendations}")
+
+        return {"answer": answer, "source_page": page_num, "source_pages": source_pages, "recommendations": recommendations}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
 

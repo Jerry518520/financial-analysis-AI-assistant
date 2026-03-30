@@ -1,0 +1,238 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.11.5, pytest-8.4.2, pluggy-1.6.0 -- D:\Projects\Python\financial-report-ai-assistant\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Projects\Python\financial-report-ai-assistant
+configfile: pyproject.toml
+plugins: anyio-4.10.0, langsmith-0.4.45, asyncio-0.24.0, cov-6.3.0
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 169 items
+
+tests/api/test_api_endpoints.py::TestHealthCheck::test_root PASSED       [  0%]
+tests/api/test_api_endpoints.py::TestUpload::test_upload_success PASSED  [  1%]
+tests/api/test_api_endpoints.py::TestUpload::test_upload_returns_filename PASSED [  1%]
+tests/api/test_api_endpoints.py::TestUpload::test_upload_no_file PASSED  [  2%]
+tests/api/test_api_endpoints.py::TestUpload::test_upload_triggers_rag_build PASSED [  2%]
+tests/api/test_api_endpoints.py::TestUpload::test_upload_parse_error PASSED [  3%]
+tests/api/test_api_endpoints.py::TestChat::test_chat_success PASSED      [  4%]
+tests/api/test_api_endpoints.py::TestChat::test_chat_returns_answer PASSED [  4%]
+tests/api/test_api_endpoints.py::TestChat::test_chat_returns_source_page PASSED [  5%]
+tests/api/test_api_endpoints.py::TestHighlight::test_no_pdf_returns_404 PASSED [  5%]
+tests/api/test_api_endpoints.py::TestHighlight::test_highlight_after_upload PASSED [  6%]
+tests/api/test_api_endpoints.py::TestHighlight::test_page_out_of_range PASSED [  7%]
+tests/api/test_api_endpoints.py::TestPreviewChunks::test_preview_success PASSED [  7%]
+tests/api/test_api_endpoints.py::TestPreviewChunks::test_preview_chunks_content PASSED [  8%]
+tests/api/test_api_endpoints.py::TestAnalyzeSummary::test_summary_success PASSED [  8%]
+tests/api/test_api_endpoints.py::TestAnalyzeSummary::test_summary_default_focus PASSED [  9%]
+tests/api/test_api_endpoints.py::TestAnalyzeSummary::test_summary_financial_focus PASSED [ 10%]
+tests/core/test_agent_logic.py::TestGetTools::test_returns_19_tools PASSED [ 10%]
+tests/core/test_agent_logic.py::TestGetTools::test_tool_names PASSED     [ 11%]
+tests/core/test_agent_logic.py::TestGetTools::test_tools_are_callable PASSED [ 11%]
+tests/core/test_agent_logic.py::TestCreateLLM::test_with_api_key PASSED  [ 12%]
+tests/core/test_agent_logic.py::TestCreateLLM::test_without_api_key PASSED [ 13%]
+tests/core/test_agent_logic.py::TestAgentNode::test_no_tool_calls_returns_text PASSED [ 13%]
+tests/core/test_agent_logic.py::TestAgentNode::test_tool_call_single PASSED [ 14%]
+tests/core/test_agent_logic.py::TestAgentNode::test_tool_call_batch PASSED [ 14%]
+tests/core/test_agent_logic.py::TestAgentNode::test_unknown_tool PASSED  [ 15%]
+tests/core/test_agent_logic.py::TestAgentNode::test_max_iterations_hard_stop PASSED [ 15%]
+tests/core/test_agent_logic.py::TestAgentNode::test_no_api_key PASSED    [ 16%]
+tests/core/test_agent_logic.py::TestShouldContinueEdge::test_continue_when_no_answer PASSED [ 17%]
+tests/core/test_agent_logic.py::TestShouldContinueEdge::test_end_when_has_answer PASSED [ 17%]
+tests/core/test_agent_logic.py::TestShouldContinueEdge::test_end_when_no_answer_empty FAILED [ 18%]
+tests/core/test_agent_logic.py::TestShouldContinueEdge::test_max_iteration_overrides PASSED [ 18%]
+tests/core/test_agent_logic.py::TestAnswerNode::test_normal_answer PASSED [ 19%]
+tests/core/test_agent_logic.py::TestAnswerNode::test_skip_when_already_has_answer PASSED [ 20%]
+tests/core/test_agent_logic.py::TestAnswerNode::test_no_api_key PASSED   [ 20%]
+tests/core/test_agent_logic.py::TestBuildAgentGraph::test_graph_has_correct_nodes PASSED [ 21%]
+tests/core/test_agent_logic.py::TestBuildAgentGraph::test_create_financial_agent_singleton PASSED [ 21%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_calculate_growth_rate PASSED [ 22%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_calculate_margin PASSED [ 23%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_calculate_roe PASSED [ 23%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_calculate_eps PASSED [ 24%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_calculate_pe PASSED [ 24%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_analyze_trend PASSED [ 25%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_calculate_avg PASSED [ 26%]
+tests/core/test_agent_logic.py::TestToolFunctions::test_tool_generate_chart_data PASSED [ 26%]
+tests/core/test_agent_logic.py::TestSimpleQuery::test_simple_revenue_question PASSED [ 27%]
+tests/core/test_agent_logic.py::TestSimpleQuery::test_simple_profit_question PASSED [ 27%]
+tests/core/test_agent_logic.py::TestSimpleQuery::test_complex_roe_question FAILED [ 28%]
+tests/core/test_agent_logic.py::TestSimpleQuery::test_complex_analysis_question PASSED [ 28%]
+tests/core/test_agent_logic.py::TestSimpleQuery::test_long_question PASSED [ 29%]
+tests/core/test_agent_logic.py::TestRunAgentQuery::test_normal_execution PASSED [ 30%]
+tests/core/test_agent_logic.py::TestRunAgentQuery::test_tool_call_then_answer PASSED [ 30%]
+tests/core/test_agent_logic.py::TestFormatToolResults::test_empty_list PASSED [ 31%]
+tests/core/test_agent_logic.py::TestFormatToolResults::test_with_results PASSED [ 31%]
+tests/integration_test.py::test_upload PASSED                            [ 32%]
+tests/integration_test.py::test_chat_rag PASSED                          [ 33%]
+tests/integration_test.py::test_chat_calculation PASSED                  [ 33%]
+tests/services/test_document_parser_hybrid.py::TestHybridParser::test_hybrid_logic PASSED [ 34%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_positive_growth PASSED [ 34%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_negative_growth PASSED [ 35%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_zero_growth PASSED [ 36%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_previous_zero PASSED [ 36%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_both_zero PASSED [ 37%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_negative_previous PASSED [ 37%]
+tests/services/test_financial_calculator.py::TestCalculateGrowthRate::test_negative_both PASSED [ 38%]
+tests/services/test_financial_calculator.py::TestCalculateMargin::test_normal_margin PASSED [ 39%]
+tests/services/test_financial_calculator.py::TestCalculateMargin::test_loss_margin PASSED [ 39%]
+tests/services/test_financial_calculator.py::TestCalculateMargin::test_revenue_zero PASSED [ 40%]
+tests/services/test_financial_calculator.py::TestCalculateMargin::test_both_zero PASSED [ 40%]
+tests/services/test_financial_calculator.py::TestCalculateROE::test_normal_roe PASSED [ 41%]
+tests/services/test_financial_calculator.py::TestCalculateROE::test_negative_equity PASSED [ 42%]
+tests/services/test_financial_calculator.py::TestCalculateROE::test_equity_zero PASSED [ 42%]
+tests/services/test_financial_calculator.py::TestFormatPercentage::test_positive PASSED [ 43%]
+tests/services/test_financial_calculator.py::TestFormatPercentage::test_negative PASSED [ 43%]
+tests/services/test_financial_calculator.py::TestFormatPercentage::test_zero PASSED [ 44%]
+tests/services/test_financial_calculator.py::TestFormatPercentage::test_string_passthrough PASSED [ 44%]
+tests/services/test_financial_calculator.py::TestCalculateDebtRatio::test_normal PASSED [ 45%]
+tests/services/test_financial_calculator.py::TestCalculateDebtRatio::test_over_100_percent PASSED [ 46%]
+tests/services/test_financial_calculator.py::TestCalculateDebtRatio::test_assets_zero PASSED [ 46%]
+tests/services/test_financial_calculator.py::TestCalculateCurrentRatio::test_normal PASSED [ 47%]
+tests/services/test_financial_calculator.py::TestCalculateCurrentRatio::test_below_one PASSED [ 47%]
+tests/services/test_financial_calculator.py::TestCalculateCurrentRatio::test_liabilities_zero PASSED [ 48%]
+tests/services/test_financial_calculator.py::TestCalculateQuickRatio::test_normal PASSED [ 49%]
+tests/services/test_financial_calculator.py::TestCalculateQuickRatio::test_inventory_exceeds_assets PASSED [ 49%]
+tests/services/test_financial_calculator.py::TestCalculateQuickRatio::test_liabilities_zero PASSED [ 50%]
+tests/services/test_financial_calculator.py::TestCalculateEPS::test_normal PASSED [ 50%]
+tests/services/test_financial_calculator.py::TestCalculateEPS::test_loss PASSED [ 51%]
+tests/services/test_financial_calculator.py::TestCalculateEPS::test_shares_zero PASSED [ 52%]
+tests/services/test_financial_calculator.py::TestCalculatePE::test_normal PASSED [ 52%]
+tests/services/test_financial_calculator.py::TestCalculatePE::test_negative_eps PASSED [ 53%]
+tests/services/test_financial_calculator.py::TestCalculatePE::test_eps_zero PASSED [ 53%]
+tests/services/test_financial_calculator.py::TestCalculateTurnover::test_normal PASSED [ 54%]
+tests/services/test_financial_calculator.py::TestCalculateTurnover::test_assets_zero PASSED [ 55%]
+tests/services/test_financial_calculator.py::TestCalculateInventoryTurnover::test_normal PASSED [ 55%]
+tests/services/test_financial_calculator.py::TestCalculateInventoryTurnover::test_inventory_zero PASSED [ 56%]
+tests/services/test_financial_calculator.py::TestCalculateInventoryTurnover::test_negative_cogs PASSED [ 56%]
+tests/services/test_financial_calculator.py::TestCalculateDividendYield::test_normal PASSED [ 57%]
+tests/services/test_financial_calculator.py::TestCalculateDividendYield::test_price_zero PASSED [ 57%]
+tests/services/test_financial_calculator.py::TestCalculateDividendYield::test_negative_dividend PASSED [ 58%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_rising_trend PASSED [ 59%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_declining_trend PASSED [ 59%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_flat_trend PASSED [ 60%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_single_value PASSED [ 60%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_empty_list PASSED [ 61%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_with_none_values PASSED [ 62%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_with_zeros PASSED [ 62%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_all_zeros PASSED [ 63%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_zero_first_nonzero_last PASSED [ 63%]
+tests/services/test_financial_calculator.py::TestAnalyzeTrend::test_cagr_calculation PASSED [ 64%]
+tests/services/test_financial_calculator.py::TestAnalyzeYoY::test_growth PASSED [ 65%]
+tests/services/test_financial_calculator.py::TestAnalyzeYoY::test_decline PASSED [ 65%]
+tests/services/test_financial_calculator.py::TestAnalyzeYoY::test_flat PASSED [ 66%]
+tests/services/test_financial_calculator.py::TestAnalyzeYoY::test_previous_zero PASSED [ 66%]
+tests/services/test_financial_calculator.py::TestAnalyzeYoY::test_negative_previous PASSED [ 67%]
+tests/services/test_financial_calculator.py::TestCompareToIndustry::test_above_industry PASSED [ 68%]
+tests/services/test_financial_calculator.py::TestCompareToIndustry::test_below_industry PASSED [ 68%]
+tests/services/test_financial_calculator.py::TestCompareToIndustry::test_equal_industry PASSED [ 69%]
+tests/services/test_financial_calculator.py::TestCompareToIndustry::test_industry_avg_zero PASSED [ 69%]
+tests/services/test_financial_calculator.py::TestCompareToIndustry::test_negative_values PASSED [ 70%]
+tests/services/test_financial_calculator.py::TestGenerateChartData::test_normal PASSED [ 71%]
+tests/services/test_financial_calculator.py::TestGenerateChartData::test_custom_metric_name PASSED [ 71%]
+tests/services/test_financial_calculator.py::TestGenerateChartData::test_mismatched_lengths PASSED [ 72%]
+tests/services/test_financial_calculator.py::TestGenerateChartData::test_empty_lists PASSED [ 72%]
+tests/services/test_financial_calculator.py::TestCalculateAvg::test_normal PASSED [ 73%]
+tests/services/test_financial_calculator.py::TestCalculateAvg::test_with_none PASSED [ 73%]
+tests/services/test_financial_calculator.py::TestCalculateAvg::test_empty_list PASSED [ 74%]
+tests/services/test_financial_calculator.py::TestCalculateAvg::test_all_none PASSED [ 75%]
+tests/services/test_financial_calculator.py::TestCalculateAvg::test_single_value PASSED [ 75%]
+tests/services/test_financial_calculator.py::TestCalculateAvg::test_negative_values PASSED [ 76%]
+tests/services/test_financial_calculator.py::TestCalculateMax::test_normal PASSED [ 76%]
+tests/services/test_financial_calculator.py::TestCalculateMax::test_with_none PASSED [ 77%]
+tests/services/test_financial_calculator.py::TestCalculateMax::test_empty_list PASSED [ 78%]
+tests/services/test_financial_calculator.py::TestCalculateMax::test_all_none PASSED [ 78%]
+tests/services/test_financial_calculator.py::TestCalculateMax::test_negative_values PASSED [ 79%]
+tests/services/test_financial_calculator.py::TestCalculateMin::test_normal PASSED [ 79%]
+tests/services/test_financial_calculator.py::TestCalculateMin::test_with_none PASSED [ 80%]
+tests/services/test_financial_calculator.py::TestCalculateMin::test_empty_list PASSED [ 81%]
+tests/services/test_financial_calculator.py::TestCalculateMin::test_all_none PASSED [ 81%]
+tests/services/test_financial_calculator.py::TestCalculateMin::test_negative_values PASSED [ 82%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_normal PASSED [ 82%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_zero_variance PASSED [ 83%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_single_value PASSED [ 84%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_empty_list PASSED [ 84%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_two_values PASSED [ 85%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_with_none PASSED [ 85%]
+tests/services/test_financial_calculator.py::TestCalculateVariance::test_all_none PASSED [ 86%]
+tests/services/test_rag_service.py::TestSplitByPage::test_normal_split PASSED [ 86%]
+tests/services/test_rag_service.py::TestSplitByPage::test_single_page PASSED [ 87%]
+tests/services/test_rag_service.py::TestSplitByPage::test_large_page_split PASSED [ 88%]
+tests/services/test_rag_service.py::TestSplitByPage::test_empty_text PASSED [ 88%]
+tests/services/test_rag_service.py::TestSplitByPage::test_no_page_markers PASSED [ 89%]
+tests/services/test_rag_service.py::TestSplitByPage::test_empty_page_content PASSED [ 89%]
+tests/services/test_rag_service.py::TestSplitByPage::test_page_num_map_updated PASSED [ 90%]
+tests/services/test_rag_service.py::TestRebuildPageNumMap::test_normal_rebuild PASSED [ 91%]
+tests/services/test_rag_service.py::TestRebuildPageNumMap::test_empty_text PASSED [ 91%]
+tests/services/test_rag_service.py::TestRebuildPageNumMap::test_skips_empty_pages PASSED [ 92%]
+tests/services/test_rag_service.py::TestGetDevice::test_cuda_available PASSED [ 92%]
+tests/services/test_rag_service.py::TestGetDevice::test_no_cuda_raises_error PASSED [ 93%]
+tests/services/test_rag_service.py::TestPreviewChunks::test_normal_preview PASSED [ 94%]
+tests/services/test_rag_service.py::TestPreviewChunks::test_empty_text PASSED [ 94%]
+tests/services/test_rag_service.py::TestPreviewChunks::test_custom_max_chars PASSED [ 95%]
+tests/services/test_rag_service.py::TestQueryRag::test_no_vector_store_and_no_cache PASSED [ 95%]
+tests/services/test_rag_service.py::TestQueryRag::test_successful_query PASSED [ 96%]
+tests/services/test_rag_service.py::TestQueryRagWithSource::test_no_vector_store PASSED [ 97%]
+tests/services/test_rag_service.py::TestQueryRagWithSource::test_successful_query_with_source PASSED [ 97%]
+tests/services/test_rag_service.py::TestQueryRagWithSource::test_empty_search_results PASSED [ 98%]
+tests/services/test_rag_service.py::TestQueryRagWithSource::test_missing_page_num_metadata PASSED [ 98%]
+tests/services/test_rag_service.py::TestBuildVectorStore::test_empty_text_returns_false PASSED [ 99%]
+tests/services/test_rag_service.py::TestLoadVectorStore::test_index_not_exists PASSED [100%]
+
+================================== FAILURES ===================================
+____________ TestShouldContinueEdge.test_end_when_no_answer_empty _____________
+tests\core\test_agent_logic.py:246: in test_end_when_no_answer_empty
+    assert should_continue_edge({}) == "end"
+E   AssertionError: assert 'continue' == 'end'
+E     
+E     - end
+E     + continue
+__________________ TestSimpleQuery.test_complex_roe_question __________________
+tests\core\test_agent_logic.py:388: in test_complex_roe_question
+    assert is_simple_query("ROE是多少？") is False
+E   AssertionError: assert True is False
+E    +  where True = <function is_simple_query at 0x000001FD55494B80>('ROE是多少？')
+============================== warnings summary ===============================
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/api/test_api_endpoints.py::TestHealthCheck::test_root
+  D:\Projects\Python\financial-report-ai-assistant\.venv\Lib\site-packages\transformers\utils\hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+    warnings.warn(
+
+tests/integration_test.py::test_upload
+  D:\Projects\Python\financial-report-ai-assistant\.venv\Lib\site-packages\_pytest\python.py:161: PytestReturnNotNoneWarning: Test functions should return None, but tests/integration_test.py::test_upload returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/integration_test.py::test_chat_rag
+  D:\Projects\Python\financial-report-ai-assistant\.venv\Lib\site-packages\_pytest\python.py:161: PytestReturnNotNoneWarning: Test functions should return None, but tests/integration_test.py::test_chat_rag returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/integration_test.py::test_chat_calculation
+  D:\Projects\Python\financial-report-ai-assistant\.venv\Lib\site-packages\_pytest\python.py:161: PytestReturnNotNoneWarning: Test functions should return None, but tests/integration_test.py::test_chat_calculation returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/core/test_agent_logic.py::TestShouldContinueEdge::test_end_when_no_answer_empty
+FAILED tests/core/test_agent_logic.py::TestSimpleQuery::test_complex_roe_question
+================= 2 failed, 167 passed, 9 warnings in 42.98s ==================
+poetry : sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+所在位置 行:1 字符: 54
++ ... ort-ai-assistant; poetry run pytest tests/ -v --tb=short 2>&1 | Out-F ...
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (sys:1: Deprecat...ule__ attribute:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

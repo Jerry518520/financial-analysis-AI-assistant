@@ -418,7 +418,12 @@ def call_chat_api(prompt):
         source_pages = [p for p in source_pages if p is not None]
         if not ai_msg.strip():
             ai_msg = "⚠️ 后端返回了空回答，请检查服务器日志或尝试重新提问。"
-        recommended = get_recommended_questions(prompt)
+        # 优先使用后端返回的推荐问题，如果没有则 fallback 到本地规则
+        recommendations = data.get("recommendations", None)
+        if recommendations and len(recommendations) > 0:
+            recommended = recommendations
+        else:
+            recommended = get_recommended_questions(prompt)
         return ai_msg, source_pages, recommended
     else:
         try:

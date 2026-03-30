@@ -240,10 +240,10 @@ class TestShouldContinueEdge:
         from financial_report_ai_assistant.core.agent import should_continue_edge
         assert should_continue_edge({"final_answer": "营收增长20%", "iteration": 1}) == "end"
 
-    def test_end_when_no_answer_empty(self):
-        """final_answer 缺失 → 结束"""
+    def test_continue_when_no_answer(self):
+        """final_answer 缺失且未超时 → 继续"""
         from financial_report_ai_assistant.core.agent import should_continue_edge
-        assert should_continue_edge({}) == "end"
+        assert should_continue_edge({}) == "continue"
 
     def test_max_iteration_overrides(self):
         """达迭代上限 → 强制结束"""
