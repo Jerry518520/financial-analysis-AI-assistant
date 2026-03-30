@@ -465,6 +465,7 @@ def _process_chat(prompt):
     with st.chat_message("assistant"):
         progress_bar = st.progress(0)
         progress_text = st.empty()
+        _auto_scroll()  # 用户消息+AI思考状态已渲染，立刻滚到底
         chat_result = {"ai_msg": None, "source_pages": [], "recommended": None, "error": None}
 
         def _call_api():
@@ -816,9 +817,7 @@ else:
             prompt = st.session_state.pending_question
             del st.session_state.pending_question
             _process_chat(prompt)
-            _auto_scroll()  # 选择预选问题后自动滚动到对话区
 
         # ========== 正常输入 ==========
         if prompt := st.chat_input("请输入问题..."):
             _process_chat(prompt)
-            _auto_scroll()
