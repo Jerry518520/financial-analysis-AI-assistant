@@ -619,6 +619,7 @@ def answer_node(state: AgentState):
 4. 如有需要，给出分析和建议
 5. 使用 Markdown 格式
 6. 即使背景信息中没有直接相关的数据，也要基于已有信息给出尽可能有用的分析，说明哪些数据缺失，而不是简单地说"未找到"
+7. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模，而不是直接写"一、债务结构与规模"
 """
     
     response = llm.invoke(answer_prompt)
@@ -765,7 +766,8 @@ def run_lightweight_query(query: str, context: str = "") -> str:
 2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头
 3. 如果背景信息中没有相关数据，请如实告知"财报中未找到相关数据"
 4. 包含具体的数值（如有）
-5. 使用 Markdown 格式"""
+5. 使用 Markdown 格式
+6. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模"""
 
     response = llm.invoke(prompt)
     return response.content
