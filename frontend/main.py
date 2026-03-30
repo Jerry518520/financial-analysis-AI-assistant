@@ -64,6 +64,38 @@ p, span, div, li, td, th {
     color: #e2e8f0 !important;
 }
 
+/* ===== Markdown 列表样式强制覆盖 ===== */
+/* 针对聊天消息内的所有列表（包括动态渲染的） */
+[data-testid="stChatMessage"] ul,
+[data-testid="stChatMessage"] ol,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ul,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ol {
+    background: transparent !important;
+    color: #e2e8f0 !important;
+    border: none !important;
+    padding-left: 1.5rem !important;
+    margin: 0.5rem 0 !important;
+    list-style-position: outside !important;
+}
+
+[data-testid="stChatMessage"] ul li,
+[data-testid="stChatMessage"] ol li,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ul li,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ol li {
+    background: transparent !important;
+    color: #e2e8f0 !important;
+    padding: 0.25rem 0 !important;
+    margin: 0.2rem 0 !important;
+    display: list-item !important;
+}
+
+[data-testid="stChatMessage"] ul li::marker,
+[data-testid="stChatMessage"] ol li::marker,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ul li::marker,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ol li::marker {
+    color: #00d4aa !important;
+}
+
 /* ===== Streamlit 原生组件样式覆盖 ===== */
 
 /* 输入框 / 文件上传 */

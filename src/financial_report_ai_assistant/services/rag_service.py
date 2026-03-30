@@ -233,7 +233,7 @@ def load_vector_store():
     with _vector_store_lock:
         return _load_vector_store_internal()
 
-def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.3):
+def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.2):
     """
     查询 RAG，返回合并后的相关文档内容。
     
@@ -268,10 +268,17 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.3):
         else:
             return "未找到与问题相关的内容。"
 
+    # 打印每个文档的相似度分数（调试用）
+    print(f"📊 相似度分数:")
+    for i, (doc, score) in enumerate(filtered):
+        page = doc.metadata.get("page_num", "?")
+        preview = doc.page_content[:50].replace("\n", " ")
+        print(f"  [{i+1}] 分数={score:.4f} 页码={page} 内容={preview}...")
+
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
     return "\n\n".join([doc.page_content for doc, _ in filtered])
 
-def query_rag_with_source(question: str, top_k: int = 3, similarity_threshold: float = 0.3) -> Dict[str, Any]:
+def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: float = 0.2) -> Dict[str, Any]:
     """
     查询 RAG 并返回上下文 + 来源页码。
     
@@ -309,6 +316,13 @@ def query_rag_with_source(question: str, top_k: int = 3, similarity_threshold: f
         print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，兜底返回 top-1")
 
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
+
+    # 打印每个文档的相似度分数（调试用）
+    print(f"📊 相似度分数:")
+    for i, (doc, score) in enumerate(filtered):
+        page = doc.metadata.get("page_num", "?")
+        preview = doc.page_content[:50].replace("\n", " ")
+        print(f"  [{i+1}] 分数={score:.4f} 页码={page} 内容={preview}...")
 
     # 取最佳匹配的页码（用于前端溯源）
     best_doc = filtered[0][0]
