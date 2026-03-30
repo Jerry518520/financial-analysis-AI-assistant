@@ -525,7 +525,7 @@ def generate_recommendations(query: str, answer: str, context: str = "") -> list
 【用户问题】：{query}
 
 【AI 回答】：
-{answer[:2000]}  # 截断避免超长
+{answer[:2000]}
 
 要求：
 1. 问题必须紧扣财报分析主题
