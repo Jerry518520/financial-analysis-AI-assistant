@@ -268,17 +268,11 @@ def agent_node(state: AgentState):
 【已完成的工具调用结果】：
 {_format_tool_results(state.get('tool_results', []))}"""
 
-    # 合并历史消息
+    # 合并历史消息（不要伪造 tool_calls 消息，历史工具结果已在 system prompt 里）
     messages = [
         {"role": "system", "content": system_text},
         {"role": "user", "content": state["question"]},
     ]
-
-    # 追加之前的工具调用历史（让 LLM 知道之前做了什么）
-    for prev_tc in state.get("tool_results", []):
-        if prev_tc.startswith("[工具调用]"):
-            messages.append({"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "（历史）", "arguments": "{}"}}]})
-            messages.append({"role": "tool", "content": str(prev_tc)})
 
     response = llm_with_tools.invoke(messages)
 
