@@ -263,6 +263,12 @@ def executor_node(state: AgentState):
 1. 工具名称
 2. 工具参数（从背景信息中提取具体数值）
 
+⚠️ 参数规则（必须严格遵守）：
+- 所有数值参数必须是具体的数字，如 120000000、0.25
+- 禁止输出表达式（如 5000000000 + 14700000000）
+- 禁止输出 null，如果找不到数据请直接输出 FINISH
+- 可以一次调用多个工具，尽可能批量完成所有计算
+
 可用的工具列表：
 {chr(10).join(f"- {name}: {tool.description}" for name, tool in tool_map.items())}
 
@@ -284,8 +290,51 @@ def executor_node(state: AgentState):
     new_calls = []
     new_results = []
 
+    def _validate_args(args: dict, tool_name: str) -> tuple[bool, dict]:
+        """验证并清洗工具参数，确保数值类型的参数是有效数值（不能是表达式、null、字符串）。
+        返回 (是否合法, 清洗后的参数)。"""
+        cleaned = {}
+        for key, value in args.items():
+            if value is None:
+                # null 参数 → 不合法，LLM 没找到数据
+                return False, {}
+            if isinstance(value, (int, float)):
+                cleaned[key] = value
+            elif isinstance(value, str):
+                # 检查字符串是否是表达式（含运算符的数字）
+                stripped = value.strip()
+                if re.match(r'^[\d\s\+\-\*\/\.\(\),]+$', stripped) and re.search(r'[\+\-\*\/]', stripped):
+                    # 是数学表达式，不合法
+                    return False, {}
+                # 尝试把纯数字字符串转为 float
+                try:
+                    cleaned[key] = float(stripped)
+                except ValueError:
+                    cleaned[key] = value  # 普通字符串保留
+            elif isinstance(value, list):
+                # 列表参数（如 values=[100, 120, 150]），检查每个元素
+                valid_list = []
+                for item in value:
+                    if isinstance(item, (int, float)):
+                        valid_list.append(item)
+                    elif isinstance(item, str):
+                        try:
+                            valid_list.append(float(item.strip()))
+                        except (ValueError, AttributeError):
+                            return False, {}
+                    else:
+                        return False, {}
+                cleaned[key] = valid_list
+            else:
+                cleaned[key] = value
+        return True, cleaned
+
     def _parse_and_execute(raw_text: str) -> bool:
-        """尝试解析 LLM 返回的工具调用 JSON 并执行。返回是否成功执行了工具。"""
+        """尝试解析 LLM 返回的工具调用 JSON 并执行。返回是否成功执行了工具。
+        
+        关键：只有工具真正执行成功才算 success。
+        工具执行出错、参数无效、未知工具等都不计入 success，避免死循环。
+        """
         nonlocal new_calls, new_results
         
         # 先检查是否 FINISH
@@ -313,17 +362,22 @@ def executor_node(state: AgentState):
 
             if tool_name not in tool_map:
                 new_results.append(f"未知工具: {tool_name}")
-                new_calls.append(f"未知工具: {tool_name}")
-                continue
+                continue  # 不计入 new_calls
+
+            # 参数验证：拒绝表达式、null、无效值
+            valid, cleaned_args = _validate_args(tool_args, tool_name)
+            if not valid:
+                new_results.append(f"工具 {tool_name} 参数无效: {tool_args}，请提供具体的数值而非表达式或 null")
+                continue  # 不计入 new_calls
 
             try:
                 tool_func = tool_map[tool_name]
-                result = tool_func.invoke(tool_args)
+                result = tool_func.invoke(cleaned_args)
                 new_results.append(str(result))
-                new_calls.append(f"{tool_name}({tool_args})")
+                new_calls.append(f"{tool_name}({cleaned_args})")
             except Exception as e:
                 new_results.append(f"工具 {tool_name} 执行出错: {str(e)}")
-                new_calls.append(f"{tool_name} 执行出错")
+                # 不追加到 new_calls → 工具出错不算"成功调用"
 
         return len(new_calls) > 0
 
@@ -338,8 +392,11 @@ def executor_node(state: AgentState):
         print(f"⚠️ executor 首次解析失败，尝试重试... 原始返回: {response_text[:200]}")
         retry_prompt = f"""你刚才的输出格式有误。请严格按以下要求重新输出：
 
-要求：输出一个合法的 JSON 数组，每个元素包含 "name" 和 "args" 字段。
-如果不需要调用工具，输出：[{{"name": "FINISH", "args": {{}}}}]
+要求：
+1. 输出一个合法的 JSON 数组，每个元素包含 "name" 和 "args" 字段
+2. args 中的数值参数必须是具体的数字（如 120000000），不能是表达式（如 5000000000 + 14700000000）、不能是 null
+3. 如果找不到某个参数的数据，请直接输出 [{{"name": "FINISH", "args": {{}}}}] 跳过
+4. 如果不需要调用工具，输出：[{{"name": "FINISH", "args": {{}}}}]
 
 用户问题：{state['question']}
 背景信息：{state['context'][:3000]}
@@ -359,9 +416,10 @@ def executor_node(state: AgentState):
     if success and not new_calls:
         return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
     
-    # 如果没有成功调用任何工具，停止循环
+    # 如果没有成功调用任何工具，停止循环并告知 answer 节点
     if not new_calls:
-        return {"should_continue": False}
+        new_results.append("⚠️ 所有工具调用均失败，无法完成计算。将基于已有信息直接回答。")
+        return {"should_continue": False, "tool_calls": new_calls, "tool_results": new_results}
 
     return {
         "tool_calls": new_calls,

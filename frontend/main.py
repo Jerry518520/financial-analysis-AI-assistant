@@ -300,14 +300,29 @@ def _auto_scroll():
             el.style.setProperty('-webkit-text-fill-color', '#e2e8f0', 'important');
         });
         
-        // 2. 滚动到页面底部（Streamlit 主容器是 section.main）
-        var mainSections = doc.querySelectorAll('section.main');
-        mainSections.forEach(function(section) {
-            section.scrollTop = section.scrollHeight;
-        });
-        
-        // 备用：也尝试直接滚 window
-        parent.window.scrollTo({ top: parent.document.body.scrollHeight, behavior: 'smooth' });
+        // 2. 自动滚动 — 用 getScrollParent 找到真正产生滚动的容器
+        var chatMessages = doc.querySelectorAll('[data-testid="stChatMessage"]');
+        if (chatMessages.length > 0) {
+            var lastMsg = chatMessages[chatMessages.length - 1];
+            var el = lastMsg;
+            var scrollParent = null;
+            while (el) {
+                var style = doc.defaultView.getComputedStyle(el);
+                var overflow = (style.overflow || '') + ' ' + (style.overflowY || '');
+                if (/(auto|scroll)/.test(overflow)) {
+                    scrollParent = el;
+                }
+                el = el.parentElement;
+            }
+            if (scrollParent) {
+                scrollParent.scrollTop = scrollParent.scrollHeight;
+            } else {
+                // 兜底：滚 window
+                doc.defaultView.scrollTo({ top: doc.body.scrollHeight, behavior: 'smooth' });
+            }
+            // 额外保险：让最后一条消息滚入视野
+            lastMsg.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
     }
     
     // 立即执行 + 延迟重试（Streamlit 渲染有延迟）
