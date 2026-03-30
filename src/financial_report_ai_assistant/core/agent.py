@@ -277,8 +277,8 @@ def agent_node(state: AgentState):
     # 追加之前的工具调用历史（让 LLM 知道之前做了什么）
     for prev_tc in state.get("tool_results", []):
         if prev_tc.startswith("[工具调用]"):
-            messages.append({"role": "assistant", "tool_calls": [{"type": "function", "function": {"name": "（历史）", "arguments": "{}"}}]})
-            messages.append({"role": "tool", "content": prev_tc})
+            messages.append({"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "（历史）", "arguments": "{}"}}]})
+            messages.append({"role": "tool", "content": str(prev_tc)})
 
     response = llm_with_tools.invoke(messages)
 
