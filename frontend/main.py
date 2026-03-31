@@ -405,9 +405,17 @@ def get_recommended_questions(user_question):
     return ["公司的盈利能力强吗？", "毛利率是多少？", "净利润同比增长多少？"]
 
 
-def call_chat_api(prompt):
-    """统一的聊天 API 调用逻辑"""
-    payload = {"question": prompt}
+def call_chat_api(prompt, history=None):
+    """统一的聊天 API 调用逻辑
+    
+    Args:
+        prompt: 当前问题
+        history: 历史对话记录 [(question, answer), ...]
+    """
+    payload = {
+        "question": prompt,
+        "conversation_history": history or []
+    }
     res = requests.post(f"{API_URL}/chat", json=payload, timeout=120)
 
     if res.status_code == 200:
@@ -490,6 +498,19 @@ def _render_recommended(rec_list, msg_idx):
                 st.rerun()
 
 
+def _extract_history_for_api():
+    """从历史消息中提取 (question, answer) 列表用于 API 调用"""
+    history = []
+    messages = st.session_state.get("messages", [])
+    for i in range(0, len(messages) - 1, 2):  # 每次取一对 (user, assistant)
+        if i + 1 < len(messages):
+            user_msg = messages[i]
+            ai_msg = messages[i + 1]
+            if user_msg.get("role") == "user" and ai_msg.get("role") == "assistant":
+                history.append((user_msg.get("content", ""), ai_msg.get("content", "")))
+    return history
+
+
 def _process_chat(prompt):
     """处理一次对话：发送问题 → 渲染回答 → 追加历史消息 → 渲染溯源和推荐"""
     st.session_state["_source_btn_counter"] = st.session_state.get("_source_btn_counter", 0) + 1
@@ -505,9 +526,12 @@ def _process_chat(prompt):
         _auto_scroll()  # 用户消息+AI思考状态已渲染，立刻滚到底
         chat_result = {"ai_msg": None, "source_pages": [], "recommended": None, "error": None}
 
+        # 【关键修复】提取历史对话记录传递给后端
+        conversation_history = _extract_history_for_api()
+
         def _call_api():
             try:
-                ai_msg, source_pages, recommended = call_chat_api(prompt)
+                ai_msg, source_pages, recommended = call_chat_api(prompt, conversation_history)
                 chat_result["ai_msg"] = ai_msg
                 chat_result["source_pages"] = source_pages
                 chat_result["recommended"] = recommended

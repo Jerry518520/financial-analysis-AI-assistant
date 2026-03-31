@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI财报分析助手 — 需求分析讨论课</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Inter:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #000000;
+  --fg: #ffffff;
+  --muted: rgba(255,255,255,0.55);
+  --accent: #3b82f6;
+  --accent2: #8b5cf6;
+  --accent3: #06b6d4;
+  --card-bg: rgba(255,255,255,0.06);
+  --card-border: rgba(255,255,255,0.1);
+  --font-cn: 'Noto Sans SC', sans-serif;
+  --font-en: 'Inter', sans-serif;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-cn);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Slides Container ── */
+.deck {
+  width: 100%; height: 100%;
+  position: relative;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 60px 80px;
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
+  overflow: hidden;
+}
+.slide.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ── Background Orbs ── */
+.orbs {
+  position: fixed; inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.35;
+  animation: orbFloat 20s ease-in-out infinite alternate;
+}
+.orb:nth-child(1) {
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, #3b82f6, transparent 70%);
+  top: -10%; left: -10%;
+  animation-delay: 0s;
+}
+.orb:nth-child(2) {
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, #8b5cf6, transparent 70%);
+  bottom: -10%; right: -5%;
+  animation-delay: -7s;
+}
+.orb:nth-child(3) {
+  width: 350px; height: 350px;
+  background: radial-gradient(circle, #06b6d4, transparent 70%);
+  top: 40%; left: 50%;
+  animation-delay: -14s;
+}
+@keyframes orbFloat {
+  0% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(60px, -40px) scale(1.1); }
+  66% { transform: translate(-30px, 50px) scale(0.95); }
+  100% { transform: translate(20px, -20px) scale(1.05); }
+}
+
+/* ── Progress Bar ── */
+.progress-bar {
+  position: fixed; bottom: 0; left: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent3));
+  z-index: 100;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.page-num {
+  position: fixed; bottom: 16px; right: 32px;
+  font-family: var(--font-en);
+  font-size: 14px;
+  color: var(--muted);
+  z-index: 100;
+}
+
+/* ── Typography ── */
+.slide-title {
+  font-size: 3.2rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+.slide-subtitle {
+  font-size: 1.3rem;
+  font-weight: 300;
+  color: var(--muted);
+  line-height: 1.6;
+  text-align: center;
+  max-width: 800px;
+}
+
+/* ── Cards Grid ── */
+.cards {
+  display: grid;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 1000px;
+  margin-top: 2rem;
+}
+.cards-2 { grid-template-columns: 1fr 1fr; }
+.cards-3 { grid-template-columns: 1fr 1fr 1fr; }
+.cards-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 28px 24px;
+  backdrop-filter: blur(12px);
+  transition: transform 0.3s, border-color 0.3s;
+}
+.card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255,255,255,0.25);
+}
+.card-icon {
+  font-size: 2rem;
+  margin-bottom: 12px;
+}
+.card-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.card-text {
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ── Section Number ── */
+.section-num {
+  font-family: var(--font-en);
+  font-size: 7rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+/* ── Use Case Diagram ── */
+.usecase-diagram {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  min-height: 380px;
+  margin-top: 1.5rem;
+}
+.uc-actor {
+  position: absolute;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.uc-actor-icon {
+  font-size: 3rem;
+  margin-bottom: 6px;
+}
+.uc-system {
+  position: absolute;
+  top: 0; left: 25%; right: 25%;
+  height: 100%;
+  border: 2px dashed rgba(255,255,255,0.2);
+  border-radius: 20px;
+}
+.uc-system-label {
+  position: absolute;
+  top: -14px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg);
+  padding: 0 16px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+.uc-case {
+  position: absolute;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 0.95rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ── Table ── */
+.spec-table {
+  width: 100%;
+  max-width: 900px;
+  border-collapse: collapse;
+  margin-top: 1.5rem;
+  font-size: 1rem;
+}
+.spec-table th {
+  text-align: left;
+  padding: 12px 16px;
+  border-bottom: 2px solid rgba(255,255,255,0.2);
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+.spec-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.8);
+  line-height: 1.5;
+  vertical-align: top;
+}
+.spec-table tr:last-child td { border-bottom: none; }
+
+/* ── Content area ── */
+.content-area {
+  width: 100%;
+  max-width: 950px;
+  text-align: left;
+}
+.content-area p, .content-area li {
+  font-size: 1.1rem;
+  line-height: 1.8;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 0.5rem;
+}
+.content-area ul {
+  list-style: none;
+  padding: 0;
+}
+.content-area ul li::before {
+  content: '→ ';
+  color: var(--accent);
+  font-weight: 700;
+}
+.highlight {
+  color: var(--accent);
+  font-weight: 700;
+}
+.highlight-purple {
+  color: var(--accent2);
+  font-weight: 700;
+}
+.highlight-cyan {
+  color: var(--accent3);
+  font-weight: 700;
+}
+.tag {
+  display: inline-block;
+  background: rgba(59,130,246,0.15);
+  border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 8px;
+  padding: 4px 14px;
+  font-size: 0.95rem;
+  color: var(--accent);
+  margin: 3px 4px;
+}
+
+/* ── Vertical Flow (for activity page) ── */
+.flow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 800px;
+  margin-top: 1.5rem;
+}
+.flow-step {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 18px 24px;
+}
+.flow-step-num {
+  font-family: var(--font-en);
+  font-size: 2rem;
+  font-weight: 900;
+  color: var(--accent);
+  min-width: 50px;
+  text-align: center;
+}
+.flow-step-content {
+  flex: 1;
+}
+.flow-step-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.flow-step-desc {
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.flow-arrow {
+  text-align: center;
+  color: var(--muted);
+  font-size: 1.5rem;
+  margin-left: 20px;
+}
+
+/* ── Animations ── */
+.anim {
+  opacity: 0;
+  transform: translateY(40px);
+  transition: opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1);
+}
+.anim-left {
+  opacity: 0;
+  transform: translateX(-60px);
+  transition: opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1);
+}
+.anim-right {
+  opacity: 0;
+  transform: translateX(60px);
+  transition: opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1);
+}
+.anim-scale {
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1);
+}
+.slide.active .anim,
+.slide.active .anim-left,
+.slide.active .anim-right,
+.slide.active .anim-scale {
+  opacity: 1;
+  transform: translateY(0) translateX(0) scale(1);
+}
+.d1 { transition-delay: 0.1s; }
+.d2 { transition-delay: 0.2s; }
+.d3 { transition-delay: 0.3s; }
+.d4 { transition-delay: 0.4s; }
+.d5 { transition-delay: 0.5s; }
+.d6 { transition-delay: 0.6s; }
+.d7 { transition-delay: 0.7s; }
+.d8 { transition-delay: 0.8s; }
+
+/* ── Cover special ── */
+.cover-project {
+  font-size: 1.5rem;
+  font-weight: 300;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.15em;
+}
+.cover-title {
+  font-size: 4rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.cover-info {
+  font-size: 1.15rem;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.cover-divider {
+  width: 60px; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 2px;
+  margin: 1.5rem auto;
+}
+
+/* ── End slide ── */
+.end-title {
+  font-size: 4rem;
+  font-weight: 900;
+  margin-bottom: 1rem;
+}
+.end-sub {
+  font-size: 1.4rem;
+  color: var(--muted);
+  font-weight: 300;
+}
+
+/* ── Two Column Layout ── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  width: 100%;
+  max-width: 950px;
+  margin-top: 1.5rem;
+  align-items: start;
+}
+.two-col > div { text-align: left; }
+.two-col h3 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: var(--accent);
+}
+.two-col li {
+  font-size: 1rem;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 0.4rem;
+}
+
+/* ── Verification Check Items ── */
+.check-list {
+  list-style: none;
+  padding: 0;
+  width: 100%;
+  max-width: 800px;
+  margin-top: 1.5rem;
+}
+.check-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 1.1rem;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 1rem;
+  padding: 14px 20px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+}
+.check-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+</style>
+</head>
+<body>
+
+<div class="orbs"><div class="orb"></div><div class="orb"></div><div class="orb"></div></div>
+
+<div class="progress-bar" id="progress"></div>
+<div class="page-num" id="pageNum"></div>
+
+<div class="deck" id="deck">
+
+<!-- ═══════════════════ SLIDE 1: 封面 ═══════════════════ -->
+<div class="slide active" data-slide="1">
+  <div class="cover-title anim d2">AI财报分析助手</div>
+  <div class="cover-divider anim d3"></div>
+  <div class="cover-info anim d4">
+    软件卓越2311 &nbsp;|&nbsp; 李冰杰 & 朱逸晨<br>
+    <span style="font-size:0.95rem;">报告人：李冰杰</span>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 2: 选题过程与成员分工 (要求①) ═══════════════════ -->
+<div class="slide" data-slide="2">
+  <div class="section-num anim d1">01</div>
+  <div class="slide-title anim d2">选题过程与成员分工</div>
+  <div class="slide-subtitle anim d3">发现痛点 → 锁定方向 → 确定方案</div>
+  <div class="two-col">
+    <div class="anim-left d4">
+      <h3>📋 选题过程</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:10px;"><span class="highlight">调研发现：</span>普通投资者面对上市公司财报时，专业术语难懂、数据分散在多处、财务指标计算复杂</li>
+        <li style="margin-bottom:10px;"><span class="highlight">锁定方向：</span>利用 AI 技术帮助非金融专业人士"一句话读懂财报"</li>
+        <li><span class="highlight">确定方案：</span>基于大语言模型 + RAG 检索增强 + Agent 沙盒计算，构建智能财报分析系统</li>
+      </ul>
+    </div>
+    <div class="anim-right d5">
+      <h3>👥 成员分工</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:10px;"><span class="highlight-purple">李冰杰（报告人）</span><br>系统架构设计<br>前后端全栈开发（Streamlit + FastAPI）<br>PDF解析 · RAG检索 · AI Agent</li>
+        <li><span class="highlight-cyan">朱逸晨</span><br>软件测试与功能验证<br>测试用例编写 · API测试 · 功能回归</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 3: 需求分析方法 (要求②上半) ═══════════════════ -->
+<div class="slide" data-slide="3">
+  <div class="section-num anim d1">02</div>
+  <div class="slide-title anim d2">需求分析方法</div>
+  <div class="slide-subtitle anim d3">面向对象需求分析方法（OOA）</div>
+  <div class="content-area" style="text-align:center; margin-top:1.5rem;">
+    <p class="anim d4" style="font-size:1.2rem; margin-bottom:1.5rem;">
+      我们选择<span class="highlight">面向对象方法</span>进行需求分析，
+      该方法从<strong>用户视角</strong>出发，
+      通过识别<strong>参与者（Actor）</strong>和<strong>用例（Use Case）</strong>来描述系统功能。
+    </p>
+    <div class="cards cards-3 anim d5">
+      <div class="card" style="text-align:center;">
+        <div class="card-icon">🎯</div>
+        <div class="card-title">为什么选面向对象</div>
+        <div class="card-text">系统交互对象明确（投资者与财报），功能边界清晰，用例模型能直观展示用户与系统的交互关系</div>
+      </div>
+      <div class="card" style="text-align:center;">
+        <div class="card-icon">📐</div>
+        <div class="card-title">建模产出</div>
+        <div class="card-text">用例图 + 用例描述<br>活动图（业务流程）<br>类图（概念模型）</div>
+      </div>
+      <div class="card" style="text-align:center;">
+        <div class="card-icon">📚</div>
+        <div class="card-title">参考资料</div>
+        <div class="card-text">《软件工程导论》张海藩<br>LlamaParse官方文档<br>LangChain / FastAPI 文档</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 4: 需求分析活动 (要求②下半) ═══════════════════ -->
+<div class="slide" data-slide="4">
+  <div class="section-num anim d1">02</div>
+  <div class="slide-title anim d2">需求分析活动</div>
+  <div class="flow-steps">
+    <div class="flow-step anim-left d2">
+      <div class="flow-step-num">1</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">📝 用户调研</div>
+        <div class="flow-step-desc">调研目标用户群体（普通股票投资者），收集核心痛点：<span style="font-size:1.25rem; font-weight:900; color:var(--accent);">术语难懂、数据分散、无法验证数据真伪</span></div>
+      </div>
+    </div>
+    <div class="flow-arrow anim d3">↓</div>
+    <div class="flow-step anim-left d4">
+      <div class="flow-step-num">2</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">📖 资料查阅</div>
+        <div class="flow-step-desc">查阅 LangChain、LangGraph、LlamaParse、FAISS 等技术文档，评估技术方案可行性</div>
+      </div>
+    </div>
+    <div class="flow-arrow anim d5">↓</div>
+    <div class="flow-step anim-left d6">
+      <div class="flow-step-num">3</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">💬 小组讨论</div>
+        <div class="flow-step-desc">小组内部讨论需求优先级，确定五大核心功能：解析、检索、摘要、计算、问答</div>
+      </div>
+    </div>
+    <div class="flow-arrow anim d7">↓</div>
+    <div class="flow-step anim-left d8">
+      <div class="flow-step-num">4</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">📐 分析建模</div>
+        <div class="flow-step-desc">绘制用例图、编写用例描述，形成软件需求规格说明书</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 5: 系统目标、意义与范围 (要求③) ═══════════════════ -->
+<div class="slide" data-slide="5">
+  <div class="section-num anim d1">03</div>
+  <div class="slide-title anim d2">系统目标、意义与范围</div>
+  <div class="two-col">
+    <div class="anim-left d3">
+      <h3>🎯 系统目的</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:8px;">帮助<span class="highlight">非金融专业人士</span>轻松读懂并分析上市公司财务报表</li>
+        <li style="margin-bottom:8px;">充当"<span class="highlight">审计助理</span>"，自动抓取高危指标并拉响警报</li>
+        <li>所有数据提供<span class="highlight">PDF页码溯源</span>，支持用户一键验证</li>
+      </ul>
+      <h3 style="margin-top:1.5rem;">📏 系统范围</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:8px;">聚焦<span class="highlight">中文上市公司年报/季报</span> PDF 格式</li>
+        <li>五大功能：PDF解析 → 向量检索 → 智能问答 → 指标计算 → 摘要生成</li>
+      </ul>
+    </div>
+    <div class="anim-right d4">
+      <h3>💡 系统意义</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;" class="highlight">降低投资门槛</div>
+          <div style="color:var(--muted);font-size:0.95rem;">让普通投资者也能像专业分析师一样审阅财报</div>
+        </li>
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;" class="highlight-purple">消除算术幻觉</div>
+          <div style="color:var(--muted);font-size:0.95rem;">Agent沙盒隔离计算，彻底杜绝大模型数值伪造</div>
+        </li>
+        <li>
+          <div style="font-weight:700; margin-bottom:4px;" class="highlight-cyan">可验证可信任</div>
+          <div style="color:var(--muted);font-size:0.95rem;">RAG全链路溯源，每个结论指向原始PDF页码</div>
+        </li>
+      </ul>
+      <div style="margin-top:1.5rem; padding:16px; background:var(--card-bg); border-radius:12px; border:1px solid var(--card-border);">
+        <div style="font-size:0.95rem; color:var(--muted); margin-bottom:6px;">目标用户</div>
+        <div style="font-size:1.15rem; font-weight:700;">缺乏专业审计能力的普通股票投资者</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 6: 用例图 (要求④-面向对象建模) ═══════════════════ -->
+<div class="slide" data-slide="6">
+  <div class="section-num anim d1">04</div>
+  <div class="slide-title anim d2">功能需求分析 — 用例图</div>
+  <div class="anim-scale d3" style="width:100%;max-width:780px;margin-top:1.5rem;">
+    <svg viewBox="0 0 780 440" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;">
+      <!-- System boundary -->
+      <rect x="220" y="10" width="420" height="420" rx="20" ry="20"
+            fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.25)" stroke-width="2" stroke-dasharray="8,4"/>
+      <text x="430" y="35" text-anchor="middle" fill="#3b82f6" font-size="16" font-weight="700">AI财报分析助手</text>
+
+      <!-- Actor: 投资者 -->
+      <g transform="translate(90, 200)">
+        <circle cx="0" cy="-30" r="18" fill="none" stroke="white" stroke-width="2"/>
+        <line x1="0" y1="-12" x2="0" y2="30" stroke="white" stroke-width="2"/>
+        <line x1="-20" y1="5" x2="20" y2="5" stroke="white" stroke-width="2"/>
+        <line x1="0" y1="30" x2="-15" y2="60" stroke="white" stroke-width="2"/>
+        <line x1="0" y1="30" x2="15" y2="60" stroke="white" stroke-width="2"/>
+        <text x="0" y="82" text-anchor="middle" fill="white" font-size="15" font-weight="600">投资者</text>
+      </g>
+
+      <!-- Association lines from 投资者 to each use case -->
+      <line x1="120" y1="175" x2="240" y2="75" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+      <line x1="120" y1="200" x2="240" y2="140" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+      <line x1="120" y1="210" x2="240" y2="215" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+      <line x1="120" y1="225" x2="240" y2="290" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+      <line x1="120" y1="240" x2="240" y2="360" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+
+      <!-- Use Case 1: 上传财报文档 -->
+      <ellipse cx="400" cy="75" rx="105" ry="28" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="400" y="80" text-anchor="middle" fill="white" font-size="14" font-weight="600">上传财报文档</text>
+
+      <!-- Use Case 2: 智能问答 -->
+      <ellipse cx="400" cy="140" rx="90" ry="28" fill="rgba(139,92,246,0.15)" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text x="400" y="145" text-anchor="middle" fill="white" font-size="14" font-weight="600">智能问答</text>
+
+      <!-- Use Case 3: 财务指标计算 -->
+      <ellipse cx="400" cy="215" rx="105" ry="28" fill="rgba(6,182,212,0.15)" stroke="#06b6d4" stroke-width="1.5"/>
+      <text x="400" y="220" text-anchor="middle" fill="white" font-size="14" font-weight="600">财务指标计算</text>
+
+      <!-- Use Case 4: 生成摘要 -->
+      <ellipse cx="400" cy="290" rx="90" ry="28" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="400" y="295" text-anchor="middle" fill="white" font-size="14" font-weight="600">生成摘要</text>
+
+      <!-- Use Case 5: 财报数据解析 -->
+      <ellipse cx="400" cy="360" rx="105" ry="28" fill="rgba(139,92,246,0.15)" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text x="400" y="365" text-anchor="middle" fill="white" font-size="14" font-weight="600">财报数据解析</text>
+
+      <!-- Use Case 6: 指标检索 -->
+      <ellipse cx="570" cy="180" rx="80" ry="28" fill="rgba(6,182,212,0.15)" stroke="#06b6d4" stroke-width="1.5"/>
+      <text x="570" y="185" text-anchor="middle" fill="white" font-size="14" font-weight="600">指标检索</text>
+
+      <!-- Use Case 7: RAG溯源问答 -->
+      <ellipse cx="575" cy="310" rx="100" ry="28" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="575" y="315" text-anchor="middle" fill="white" font-size="14" font-weight="600">RAG溯源问答</text>
+
+
+
+    </svg>
+  </div>
+  <div style="margin-top:0.8rem; text-align:center;">
+    <span class="tag anim d4">上传</span>
+    <span class="tag anim d5">解析</span>
+    <span class="tag anim d6">检索</span>
+    <span class="tag anim d7">问答</span>
+    <span class="tag anim d8">计算</span>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 7: 核心用例描述 (要求④) ═══════════════════ -->
+<div class="slide" data-slide="7">
+  <div class="section-num anim d1">04</div>
+  <div class="slide-title anim d2">功能需求 — 核心用例描述</div>
+  <div style="width:100%; max-width:950px; margin-top:1rem;">
+    <table class="spec-table anim d3">
+      <thead>
+        <tr>
+          <th style="width:18%;">用例名称</th>
+          <th style="width:22%;">前置条件</th>
+          <th>主要流程</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>PDF智能解析</strong></td>
+          <td>用户已上传PDF文件</td>
+          <td>系统采用混合解析策略：普通页面使用PyMuPDF本地提取，表格页面送LlamaParse高精度解析，自动识别有边框和无边框表格，结果本地缓存</td>
+        </tr>
+        <tr>
+          <td><strong>RAG溯源问答</strong></td>
+          <td>PDF解析完成，向量索引已构建</td>
+          <td>用户提问 → 系统在向量库中检索最相关文本片段 → 组装上下文发送给LLM → 生成答案并附带源文档页码引用 → 用户可一键验证</td>
+        </tr>
+        <tr>
+          <td><strong>Agent沙盒计算</strong></td>
+          <td>用户提出涉及财务指标计算的问题</td>
+          <td>Agent通过Plan-Execute-Observe动态规划 → 从上下文提取计算参数 → 注入Python确定性沙盒执行计算 → 返回精确数值结果</td>
+        </tr>
+        <tr>
+          <td><strong>一键排雷</strong></td>
+          <td>PDF上传完成</td>
+          <td>系统自动后台巡检核心风险科目 → 在界面顶部生成可视化风险指示灯（高危/正常）→ 变"被动提问"为"主动防御"</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 8: 业务流程（活动图） (要求④) ═══════════════════ -->
+<div class="slide" data-slide="8">
+  <div class="section-num anim d1">04</div>
+  <div class="slide-title anim d2">功能需求 — 业务流程</div>
+  <div class="slide-subtitle anim d3">用活动图呈现的财报解析全流程</div>
+  <div class="flow-steps" style="max-width:850px;">
+    <div class="flow-step anim-left d3">
+      <div class="flow-step-num" style="font-size:1.5rem;">⬤</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">开始</div>
+        <div class="flow-step-desc">用户通过Web界面上传PDF财报文件</div>
+      </div>
+    </div>
+    <div class="flow-arrow anim d3">↓</div>
+    <div class="flow-step anim-left d4">
+      <div class="flow-step-num">①</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">混合解析</div>
+        <div class="flow-step-desc">PyMuPDF本地提取 + LlamaParse高精度表格解析，自动识别页面类型</div>
+      </div>
+    </div>
+    <div class="flow-arrow anim d5">↓</div>
+    <div class="flow-step anim-left d6">
+      <div class="flow-step-num">②</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">向量索引构建</div>
+        <div class="flow-step-desc">MarkdownTextSplitter智能切分 → HuggingFace Embeddings向量化 → FAISS索引存储</div>
+      </div>
+    </div>
+    <div class="flow-arrow anim d7">↓</div>
+    <div class="flow-step anim-left d8">
+      <div class="flow-step-num">③</div>
+      <div class="flow-step-content">
+        <div class="flow-step-title">用户交互</div>
+        <div class="flow-step-desc">用户可进行：提问（RAG溯源问答）、计算（Agent沙盒）、摘要生成、一键排雷</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 9: 性能需求与接口需求 (要求⑤) ═══════════════════ -->
+<div class="slide" data-slide="9">
+  <div class="section-num anim d1">05</div>
+  <div class="slide-title anim d2">性能需求与接口需求</div>
+  <div class="two-col">
+    <div class="anim-left d3">
+      <h3>⚡ 性能需求</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;">PDF解析性能</div>
+          <div style="color:var(--muted);font-size:0.95rem;">100页财报本地解析 <span class="highlight">&lt;30秒</span>，含表格页面启用LlamaParse高精度模式</div>
+        </li>
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;">问答响应时间</div>
+          <div style="color:var(--muted);font-size:0.95rem;">RAG检索 + LLM生成首字响应 <span class="highlight">&lt;5秒</span>，完整回答流式输出</div>
+        </li>
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;">向量检索效率</div>
+          <div style="color:var(--muted);font-size:0.95rem;">FAISS索引在100页财报的向量库中，Top-K检索响应 <span class="highlight">&lt;1秒</span></div>
+        </li>
+        <li>
+          <div style="font-weight:700; margin-bottom:4px;">计算准确性</div>
+          <div style="color:var(--muted);font-size:0.95rem;">Agent沙盒计算结果精确到小数点后2位，财务指标计算零幻觉</div>
+        </li>
+      </ul>
+    </div>
+    <div class="anim-right d4">
+      <h3>🔌 接口需求</h3>
+      <ul style="list-style:none;padding:0;">
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;" class="highlight">用户接口</div>
+          <div style="color:var(--muted);font-size:0.95rem;">Streamlit Web界面，文件上传、聊天对话、可视化排雷大盘</div>
+        </li>
+        <li style="margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:4px;" class="highlight-purple">外部接口</div>
+          <div style="color:var(--muted);font-size:0.95rem;">DeepSeek LLM API（文本生成）<br>LlamaParse API（高精度表格解析）</div>
+        </li>
+        <li>
+          <div style="font-weight:700; margin-bottom:4px;" class="highlight-cyan">软件接口</div>
+          <div style="color:var(--muted);font-size:0.95rem;">FastAPI RESTful API<br>前端与后端通过HTTP通信</div>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 10: 其它需求 (要求⑥) ═══════════════════ -->
+<div class="slide" data-slide="10">
+  <div class="section-num anim d1">06</div>
+  <div class="slide-title anim d2">其它需求</div>
+  <div class="cards cards-2" style="margin-top:2rem;">
+    <div class="card anim-left d3">
+      <div class="card-icon">🔒</div>
+      <div class="card-title">安全性</div>
+      <div class="card-text" style="font-size:1rem;">用户上传的财报文件在本地完成解析和向量化，仅检索查询通过API调用云端LLM。Agent计算在隔离沙盒中执行，防止恶意代码注入。</div>
+    </div>
+    <div class="card anim-right d4">
+      <div class="card-icon">🔧</div>
+      <div class="card-title">可维护性</div>
+      <div class="card-text" style="font-size:1rem;">采用模块化架构：PDF解析、向量检索、Agent计算、前端UI 各模块独立。核心LLM支持DeepSeek及OpenAI兼容接口替换。</div>
+    </div>
+    <div class="card anim-left d5">
+      <div class="card-icon">📦</div>
+      <div class="card-title">可移植性</div>
+      <div class="card-text" style="font-size:1rem;">支持Docker一键部署，也可本地Poetry开发环境运行。依赖Python 3.11，推荐配备NVIDIA GPU以提升推理性能。</div>
+    </div>
+    <div class="card anim-right d6">
+      <div class="card-icon">✨</div>
+      <div class="card-title">易用性</div>
+      <div class="card-text" style="font-size:1rem;">Web交互界面简洁直观，用户只需上传PDF即可使用。系统自动完成解析、索引构建、排雷检测，无需手动配置。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SLIDE 11: 需求验证 (要求⑦) ═══════════════════ -->
+<div class="slide" data-slide="11">
+  <div class="section-num anim d1">07</div>
+  <div class="slide-title anim d2">需求验证</div>
+  <div class="slide-subtitle anim d3">验证需求的正确性及完整性，防止系统需求过少或存在明显冲突</div>
+  <ul class="check-list">
+    <li class="anim-left d3">
+      <span class="check-icon">✅</span>
+      <div>
+        <strong>同行评审</strong>：小组成员交叉审查需求规格说明书，检查需求描述是否清晰、无歧义，各需求之间是否存在矛盾
+      </div>
+    </li>
+    <li class="anim-left d4">
+      <span class="check-icon">✅</span>
+      <div>
+        <strong>需求覆盖性检查</strong>：逐一对照讨论课要求的7个方面，确认选题分工、分析方法、分析活动、目标范围、功能建模、性能接口、其他需求均完整覆盖
+      </div>
+    </li>
+    <li class="anim-left d5">
+      <span class="check-icon">✅</span>
+      <div>
+        <strong>用例场景验证</strong>：针对每个核心用例编写测试用例，通过自动化测试验证功能需求的可实现性和正确性
+      </div>
+    </li>
+    <li class="anim-left d6">
+      <span class="check-icon">✅</span>
+      <div>
+        <strong>一致性检查</strong>：确保需求文档中各章节的术语、定义、功能描述保持一致，不存在前后矛盾
+      </div>
+    </li>
+    <li class="anim-left d7">
+      <span class="check-icon">✅</span>
+      <div>
+        <strong>可追溯性</strong>：每条需求可追溯到对应的用例和用户场景，确保没有"悬空"需求
+      </div>
+    </li>
+  </ul>
+</div>
+
+<!-- ═══════════════════ SLIDE 12: Q&A ═══════════════════ -->
+<div class="slide" data-slide="12">
+  <div class="end-title anim d1">感谢聆听</div>
+  <div class="cover-divider anim d2"></div>
+  <div class="end-sub anim d3">Q & A</div>
+  <div class="anim d4" style="margin-top:2rem; font-size:1rem; color:var(--muted);">
+    AI财报分析助手 — 需求分析讨论课<br>
+    软件卓越2311 · 李冰杰 & 朱逸晨
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<script>
+(function(){
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  let current = 0;
+  const progress = document.getElementById('progress');
+  const pageNum = document.getElementById('pageNum');
+
+  function goTo(idx){
+    if(idx < 0 || idx >= total) return;
+    slides[current].classList.remove('active');
+    // Reset animations
+    slides[current].querySelectorAll('.anim,.anim-left,.anim-right,.anim-scale').forEach(el=>{
+      // force reflow trick not needed since we use visibility
+    });
+    current = idx;
+    slides[current].classList.add('active');
+    progress.style.width = ((current+1)/total*100)+'%';
+    pageNum.textContent = (current+1)+' / '+total;
+  }
+
+  document.addEventListener('keydown', e=>{
+    if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' '){ e.preventDefault(); goTo(current+1); }
+    if(e.key==='ArrowLeft'||e.key==='ArrowUp'){ e.preventDefault(); goTo(current-1); }
+    if(e.key==='Home'){ e.preventDefault(); goTo(0); }
+    if(e.key==='End'){ e.preventDefault(); goTo(total-1); }
+  });
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e=>{ touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', e=>{
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if(Math.abs(diff) > 50){ diff > 0 ? goTo(current+1) : goTo(current-1); }
+  });
+
+  goTo(0);
+})();
+</script>
+</body>
+</html>

@@ -70,7 +70,13 @@ def preview_chunks(full_text: str, max_chars: int = 500):
     return [doc.page_content for doc in docs]
 
 def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Document]:
-    """按 PDF 页切分文本，每块记录 page_num"""
+    """按 PDF 页切分文本，每块记录 page_num
+    
+    【修复】改进表格数据处理：
+    1. 识别表格标记，尽量保持表格完整性
+    2. 表格内容不切分，避免数据断裂
+    3. 增强表格行的上下文信息
+    """
     global PAGE_NUM_MAP
     PAGE_NUM_MAP = {}
 
@@ -86,21 +92,81 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
         content = parts[i + 1] if i + 1 < len(parts) else ""
 
         if content.strip():
-            if len(content) > max_chars_per_chunk:
+            # 【修复】检测是否为表格内容（包含 markdown 表格标记或财务关键词）
+            is_table = _is_table_content(content)
+            
+            if is_table:
+                # 表格内容：不切分，保持完整，并增强上下文
+                enhanced_content = _enhance_table_content(content, page_num)
+                doc = Document(page_content=enhanced_content, metadata={"page_num": page_num, "type": "table"})
+                documents.append(doc)
+                PAGE_NUM_MAP[doc_index] = page_num
+                doc_index += 1
+            elif len(content) > max_chars_per_chunk:
+                # 普通长文本：按长度切分
                 sub_chunks = [content[j:j+max_chars_per_chunk] for j in range(0, len(content), max_chars_per_chunk)]
                 for sub_chunk in sub_chunks:
-                    doc = Document(page_content=sub_chunk.strip(), metadata={"page_num": page_num})
+                    doc = Document(page_content=sub_chunk.strip(), metadata={"page_num": page_num, "type": "text"})
                     documents.append(doc)
                     PAGE_NUM_MAP[doc_index] = page_num
                     doc_index += 1
             else:
-                doc = Document(page_content=content.strip(), metadata={"page_num": page_num})
+                # 普通短文本：保持完整
+                doc = Document(page_content=content.strip(), metadata={"page_num": page_num, "type": "text"})
                 documents.append(doc)
                 PAGE_NUM_MAP[doc_index] = page_num
                 doc_index += 1
         i += 2
 
     return documents
+
+
+def _is_table_content(content: str) -> bool:
+    """检测内容是否为表格（markdown 表格或财务数据表）"""
+    # 检测 markdown 表格标记
+    has_table_markers = "|" in content and "---" in content
+    
+    # 检测财务表格关键词
+    financial_table_keywords = [
+        "合并资产负债表", "合并利润表", "合并现金流量表",
+        "资产总计", "负债总计", "营业收入", "净利润",
+        "流动资产", "非流动资产", "流动负债", "非流动负债",
+        "货币资金", "应收账款", "存货", "固定资产"
+    ]
+    has_financial_keywords = any(kw in content for kw in financial_table_keywords)
+    
+    # 检测数字密度（表格通常有很多数字）
+    digit_count = sum(1 for c in content if c.isdigit())
+    digit_ratio = digit_count / len(content) if content else 0
+    
+    # 如果满足任一条件，认为是表格
+    return has_table_markers or (has_financial_keywords and digit_ratio > 0.05)
+
+
+def _enhance_table_content(content: str, page_num: int) -> str:
+    """增强表格内容的上下文信息，便于检索"""
+    # 提取表格中的关键财务指标作为前缀
+    indicators = []
+    
+    # 常见的财务指标模式
+    patterns = [
+        r'(营业收入|营业成本|毛利|净利润|总资产|总负债|净资产|货币资金|应收账款|存货)',
+        r'(流动资产|非流动资产|流动负债|非流动负债|所有者权益)',
+        r'(毛利率|净利率|ROE|ROA|资产负债率|流动比率)'
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, content)
+        indicators.extend(matches)
+    
+    # 去重并限制数量
+    unique_indicators = list(dict.fromkeys(indicators))[:10]
+    
+    if unique_indicators:
+        header = f"【第{page_num}页财务数据表，包含：{', '.join(unique_indicators)}】\n"
+        return header + content
+    
+    return content
 
 def build_vector_store(full_text: str, pdf_hash: str = ""):
     """

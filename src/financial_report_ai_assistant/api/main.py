@@ -40,6 +40,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     question: str
+    conversation_history: list = []  # 历史对话记录 [(question, answer), ...]
 
 @app.get("/")
 def read_root():
@@ -116,7 +117,7 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
 @app.post("/chat")
 async def chat_with_report(request: ChatRequest):
     try:
-        # RAG 检索
+        # RAG 检索（当前问题）
         rag_result = await asyncio.to_thread(query_rag_with_source, request.question)
         relevant_context = rag_result["context"]
         page_num = rag_result["page_num"]
@@ -125,22 +126,59 @@ async def chat_with_report(request: ChatRequest):
         print(f"🔍 用户问: {request.question}")
         print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")
 
+        # 【关键修复】构建增强上下文：当前 RAG 结果 + 历史对话中提取的数据
+        enhanced_context = _build_enhanced_context(
+            current_context=relevant_context,
+            history=request.conversation_history,
+            current_question=request.question
+        )
+
         # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
         from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
         if is_simple_query(request.question):
             print(f"⚡ 轻量级查询模式（简单问题快速通道）")
-            answer = await asyncio.to_thread(run_lightweight_query, request.question, relevant_context)
+            answer = await asyncio.to_thread(run_lightweight_query, request.question, enhanced_context)
         else:
             print(f"🤖 Agent 深度分析模式")
-            answer = await asyncio.to_thread(run_agent_query, request.question, relevant_context)
+            answer = await asyncio.to_thread(run_agent_query, request.question, enhanced_context)
 
         # 生成推荐问题（基于回答动态生成）
-        recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, relevant_context)
+        recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
         print(f"💡 推荐问题: {recommendations}")
 
         return {"answer": answer, "source_page": page_num, "source_pages": source_pages, "recommendations": recommendations}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
+
+
+def _build_enhanced_context(current_context: str, history: list, current_question: str) -> str:
+    """
+    构建增强上下文：合并当前 RAG 结果 + 从历史对话中提取的数值数据
+    
+    这样 Agent 可以看到之前计算的结果，实现跨对话的数据复用
+    """
+    if not history:
+        return current_context
+    
+    # 从历史对话中提取数值数据（问答对）
+    history_data = []
+    for i, (q, a) in enumerate(history[-5:]):  # 只取最近 5 轮
+        history_data.append(f"【历史问题 {i+1}】{q}\n【历史回答 {i+1}】{a[:500]}...")  # 截断避免过长
+    
+    enhanced = f"""【当前问题相关文档】
+{current_context}
+
+【历史对话记录（用于数据复用）】
+{"\n\n".join(history_data)}
+
+【重要提示】
+1. 如果当前问题需要的数据在历史回答中已经计算过，请直接使用历史数据，不要重新检索
+2. 如果历史回答中已有毛利率、净利率、ROE 等指标计算结果，请优先使用这些数值
+3. 如果用户问"刚才计算的毛利率是多少"，请从历史回答中找到具体数值回答"""
+    
+    return enhanced
 
 @app.get("/highlight")
 async def highlight_page(
