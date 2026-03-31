@@ -31,7 +31,9 @@ services:
       - app-network
 
   frontend:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     container_name: financial_report_frontend
     ports:
       - "8501:8501"

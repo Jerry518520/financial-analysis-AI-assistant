@@ -1,0 +1,20 @@
+# Frontend 精简镜像 — 仅 Streamlit，无需 PyTorch
+FROM docker.m.daocloud.io/python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# 安装 Streamlit 和 requests（前端仅需这两个依赖）
+RUN pip install --no-cache-dir \
+    streamlit \
+    requests \
+    -i https://mirrors.aliyun.com/pypi/simple/
+
+# 只复制前端代码
+COPY frontend/ ./frontend/
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "frontend/main.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
