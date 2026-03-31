@@ -27,6 +27,13 @@ services:
               count: all
               capabilities: [gpu]
     command: uvicorn financial_report_ai_assistant.api.main:app --host 0.0.0.0 --port 8000
+    # 健康检查：frontend 会等 backend healthy 后才启动
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - app-network
 
@@ -43,7 +50,8 @@ services:
       # 不要用 host.docker.internal（那是访问宿主机用的）
       - API_URL=http://backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     command: streamlit run frontend/main.py --server.address 0.0.0.0 --server.port 8501
     networks:
       - app-network

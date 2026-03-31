@@ -6,10 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# 安装 Streamlit 和 requests（前端仅需这两个依赖）
+# 安装 Streamlit、requests、markdown（前端所需依赖）
 RUN pip install --no-cache-dir \
     streamlit \
     requests \
+    markdown \
     -i https://mirrors.aliyun.com/pypi/simple/
 
 # 只复制前端代码
