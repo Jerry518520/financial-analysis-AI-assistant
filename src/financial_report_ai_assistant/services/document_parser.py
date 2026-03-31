@@ -13,7 +13,12 @@ if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
 # 为了防止 LlamaParse 处理过多页面导致超时或消耗过多额度，设置一个软上限
-MAX_LLAMA_PAGES = 20 
+MAX_LLAMA_PAGES = 20
+
+# 【策略调整】非必要不使用 LlamaParse
+# 优先级：1. PyMuPDF 提取表格文本  2. LlamaParse（仅当 PyMuPDF 效果差时）
+# 只有无边框表格且 PyMuPDF 提取效果差时，才使用 LlamaParse
+FORCE_LLAMA_PARSE = os.getenv("FORCE_LLAMA_PARSE", "false").lower() == "true" 
 
 # LlamaParse 支持的语言代码
 LLAMA_LANG_MAP = {
@@ -89,6 +94,99 @@ def _is_suspected_table_page(page) -> bool:
         
     return False
 
+
+def _extract_table_with_pymupdf(page) -> str:
+    """
+    使用 PyMuPDF 提取页面中的表格内容，返回格式化的文本
+    
+    策略：
+    1. 先尝试 find_tables() 提取结构化表格
+    2. 如果提取不到，尝试按文本块布局分析
+    3. 返回 markdown 格式的表格文本
+    """
+    text = page.get_text()
+    
+    # 尝试提取结构化表格
+    try:
+        tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
+        if tables.tables:
+            table_texts = []
+            for tab in tables.tables:
+                # 提取表格为 markdown 格式
+                rows = []
+                for row in tab.extract():
+                    if row:
+                        # 清理空值，转换为字符串
+                        cleaned = [str(cell).strip() if cell else "" for cell in row]
+                        rows.append("| " + " | ".join(cleaned) + " |")
+                
+                if rows:
+                    # 添加表头分隔行
+                    if len(rows) > 0:
+                        col_count = len(rows[0].split("|")) - 2  # 减去两边的空字符串
+                        separator = "|" + "---|" * col_count
+                        rows.insert(1, separator)
+                    table_texts.append("\n".join(rows))
+            
+            if table_texts:
+                return "\n\n".join(table_texts)
+    except Exception as e:
+        print(f"⚠️ PyMuPDF 表格提取失败: {e}")
+    
+    # 如果结构化提取失败，尝试按文本块分析（针对无边框表格）
+    # 检测是否可能是表格：数字对齐、多列布局等
+    blocks = page.get_text("blocks")
+    if len(blocks) > 3:
+        # 简单的启发式：如果有很多文本块且包含数字，尝试格式化
+        lines = text.split('\n')
+        formatted_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 检测是否是财务数据行（包含数字和中文）
+            has_chinese = bool(re.search(r'[\u4e00-\u9fff]', line))
+            has_number = bool(re.search(r'\d', line))
+            if has_chinese and has_number:
+                formatted_lines.append(line)
+        
+        if len(formatted_lines) > 5:
+            return "\n".join(formatted_lines)
+    
+    # 兜底：返回原始文本
+    return text
+
+
+def _is_pymupdf_extraction_good(page_text: str) -> bool:
+    """
+    判断 PyMuPDF 提取的表格文本质量是否足够好
+    
+    质量标准：
+    1. 包含足够的数字（表格应该有数据）
+    2. 包含财务关键词
+    3. 文本结构清晰（有换行、有对齐感）
+    """
+    if not page_text or len(page_text) < 50:
+        return False
+    
+    # 检查数字密度
+    digit_count = sum(1 for c in page_text if c.isdigit())
+    digit_ratio = digit_count / len(page_text) if page_text else 0
+    
+    # 检查财务关键词
+    financial_keywords = [
+        "资产", "负债", "权益", "收入", "成本", "利润", "现金",
+        "Assets", "Liabilities", "Equity", "Revenue", "Cost", "Profit"
+    ]
+    has_financial_kw = any(kw in page_text for kw in financial_keywords)
+    
+    # 检查是否有合理的行数（表格应该有多行）
+    line_count = len([l for l in page_text.split('\n') if l.strip()])
+    
+    # 质量标准：有财务关键词 + 数字密度 > 3% + 行数 > 5
+    return has_financial_kw and digit_ratio > 0.03 and line_count > 5
+
 def get_cache_path(file_content: bytes) -> str:
     # 简单的哈希缓存，避免重复解析同一文件
     file_hash = hashlib.md5(file_content).hexdigest()
@@ -148,63 +246,97 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                 text = page.get_text()
                 text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
 
-        print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，将送往 LlamaParse。剩余 {len(text_pages_content)} 页本地提取。")
+        print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，{len(text_pages_content)} 页纯文本。")
 
-        # 3. 处理表格页面 (LlamaParse)
+        # 3. 处理表格页面（优先 PyMuPDF，必要时 LlamaParse）
         llama_pages_content = {} # {page_index: markdown_content}
+        pymupdf_table_pages = {} # {page_index: markdown_content}
         
         if table_pages_indices:
-            # 如果表格页太多，按优先级截断（防止 LlamaParse 超时/超额度）
-            target_indices = table_pages_indices[:MAX_LLAMA_PAGES]
-            if len(table_pages_indices) > MAX_LLAMA_PAGES:
-                print(f"⚠️ 表格页共 {len(table_pages_indices)} 页，LlamaParse 只增强前 {MAX_LLAMA_PAGES} 页（其余降级为纯文本提取）")
-                # 对于那些被截断的表格页，我们还是要提取纯文本，不能丢弃
-                for idx in table_pages_indices[MAX_LLAMA_PAGES:]:
-                    page = doc[idx]
-                    text = page.get_text()
-                    text_pages_content[idx] = f"--- Page {idx+1} (Table Skipped) ---\n{text}\n"
+            # 【新策略】先用 PyMuPDF 尝试提取表格
+            pages_need_llama = []  # 记录 PyMuPDF 处理效果不好的页面
             
-            # 构建临时 PDF 子集
-            subset_filename = f"temp_tables_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
-            new_doc = fitz.open()
-            for idx in target_indices:
-                new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
-            new_doc.save(subset_filename)
-            new_doc.close()
+            for idx in table_pages_indices:
+                page = doc[idx]
+                
+                # 尝试 PyMuPDF 提取
+                pymupdf_result = _extract_table_with_pymupdf(page)
+                
+                # 检查提取质量
+                if _is_pymupdf_extraction_good(pymupdf_result) and not FORCE_LLAMA_PARSE:
+                    # PyMuPDF 提取效果好，直接使用
+                    print(f"✅ Page {idx+1}: PyMuPDF 提取成功")
+                    pymupdf_table_pages[idx] = f"--- Page {idx+1} ---\n{pymupdf_result}\n"
+                else:
+                    # PyMuPDF 效果不好，标记为需要 LlamaParse
+                    print(f"⚠️ Page {idx+1}: PyMuPDF 效果不佳，将使用 LlamaParse")
+                    pages_need_llama.append(idx)
             
-            # 发送给 LlamaParse
-            print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
-            api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-            if not api_key:
-                doc.close()
-                return {"status": "error", "error": "Missing LLAMA_CLOUD_API_KEY"}
-            
-            # 自动检测文档语言
-            detected_lang = _detect_language(doc)
-            print(f"🌍 检测到文档语言: {detected_lang}，使用对应 LlamaParse 配置")
-            
-            parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
-            documents = parser.load_data(subset_filename)
-            
-            # 映射回原始页码
-            # LlamaParse 返回的 documents 列表顺序对应我们 subset pdf 的页顺序
-            for idx, result_doc in enumerate(documents):
-                if idx < len(target_indices):
-                    original_page_idx = target_indices[idx]
-                    llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (Table Enhanced) ---\n{result_doc.text}\n"
-            
-            # 清理临时文件
-            if os.path.exists(subset_filename):
-                try:
-                    os.remove(subset_filename)
-                except OSError:
-                    pass
+            # 对 PyMuPDF 效果不好的页面，使用 LlamaParse（限制数量）
+            if pages_need_llama:
+                target_indices = pages_need_llama[:MAX_LLAMA_PAGES]
+                if len(pages_need_llama) > MAX_LLAMA_PAGES:
+                    print(f"⚠️ 需要 LlamaParse 的页面共 {len(pages_need_llama)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
+                    # 剩余的页面降级为纯文本
+                    for idx in pages_need_llama[MAX_LLAMA_PAGES:]:
+                        page = doc[idx]
+                        text = page.get_text()
+                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                
+                # 构建临时 PDF 子集
+                subset_filename = f"temp_tables_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
+                new_doc = fitz.open()
+                for idx in target_indices:
+                    new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+                new_doc.save(subset_filename)
+                new_doc.close()
+                
+                # 发送给 LlamaParse
+                print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
+                api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+                if not api_key:
+                    # 没有 API key，降级为 PyMuPDF
+                    print("⚠️ 缺少 LLAMA_CLOUD_API_KEY，降级为 PyMuPDF 提取")
+                    for idx in target_indices:
+                        page = doc[idx]
+                        text = page.get_text()
+                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                else:
+                    # 自动检测文档语言
+                    detected_lang = _detect_language(doc)
+                    print(f"🌍 检测到文档语言: {detected_lang}，使用对应 LlamaParse 配置")
+                    
+                    try:
+                        parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
+                        documents = parser.load_data(subset_filename)
+                        
+                        # 映射回原始页码
+                        for idx, result_doc in enumerate(documents):
+                            if idx < len(target_indices):
+                                original_page_idx = target_indices[idx]
+                                llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
+                    except Exception as e:
+                        print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
+                        for idx in target_indices:
+                            page = doc[idx]
+                            text = page.get_text()
+                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                
+                # 清理临时文件
+                if os.path.exists(subset_filename):
+                    try:
+                        os.remove(subset_filename)
+                    except OSError:
+                        pass
 
         # 4. 合并所有内容 (按页码顺序)
+        # 优先级：LlamaParse > PyMuPDF 表格 > 纯文本
         final_full_text = []
         for i in range(total_pages):
             if i in llama_pages_content:
                 final_full_text.append(llama_pages_content[i])
+            elif i in pymupdf_table_pages:
+                final_full_text.append(pymupdf_table_pages[i])
             elif i in text_pages_content:
                 final_full_text.append(text_pages_content[i])
         
