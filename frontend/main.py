@@ -499,16 +499,36 @@ def _render_recommended(rec_list, msg_idx):
 
 
 def _extract_history_for_api():
-    """从历史消息中提取 (question, answer) 列表用于 API 调用"""
+    """从历史消息中提取 (question, answer) 列表用于 API 调用
+    
+    注意：只提取完整的问答对（user + assistant），排除当前未回答的问题
+    """
     history = []
     messages = st.session_state.get("messages", [])
-    for i in range(0, len(messages) - 1, 2):  # 每次取一对 (user, assistant)
-        if i + 1 < len(messages):
+    
+    # 找到最后一个完整的问答对（确保有 user 和 assistant）
+    # messages 格式：[user1, assistant1, user2, assistant2, ...]
+    # 如果最后一条是 user（当前问题还没回答），则排除它
+    n = len(messages)
+    if n == 0:
+        return history
+    
+    # 如果最后一条是 user（没有对应的 assistant），则只取到前一条
+    if messages[-1].get("role") == "user":
+        n = n - 1
+    
+    # 现在 n 是完整的长度（偶数），取所有完整的问答对
+    for i in range(0, n, 2):
+        if i + 1 < n:
             user_msg = messages[i]
             ai_msg = messages[i + 1]
             if user_msg.get("role") == "user" and ai_msg.get("role") == "assistant":
-                history.append((user_msg.get("content", ""), ai_msg.get("content", "")))
-    return history
+                # 截取回答前500字符，避免过长
+                answer = ai_msg.get("content", "")[:500]
+                history.append((user_msg.get("content", ""), answer))
+    
+    # 只返回最近 5 轮（避免过长）
+    return history[-5:]
 
 
 def _process_chat(prompt):

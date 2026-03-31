@@ -490,13 +490,16 @@ def is_simple_query(question: str) -> bool:
     return False
 
 def run_lightweight_query(query: str, context: str = "") -> str:
-    """轻量级查询：单次 LLM 调用 + RAG 上下文，适合简单事实性问题"""
+    """轻量级查询：单次 LLM 调用 + RAG 上下文，适合简单事实性问题
+    
+    【注意】轻量级查询也支持历史数据复用，context 中已包含历史对话记录
+    """
     from financial_report_ai_assistant.services.ai_chat import get_llm
     llm = get_llm()
 
     prompt = f"""你是一位专业的金融分析师。请根据以下财报背景信息，直接回答用户的问题。
 
-【背景信息】：
+【背景信息】（包含当前文档和历史对话数据）：
 {context}
 
 【用户问题】：{query}
@@ -507,7 +510,12 @@ def run_lightweight_query(query: str, context: str = "") -> str:
 3. 如果背景信息中没有相关数据，请如实告知"财报中未找到相关数据"
 4. 包含具体的数值（如有）
 5. 使用 Markdown 格式
-6. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模"""
+6. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模
+
+【重要提示】：
+- 如果用户问"刚才计算的XXX是多少"，请从历史对话记录中找到对应数值
+- 如果历史回答中已有毛利率、净利率等指标，直接使用该数值回答
+- 表格数据中的数值可以直接引用"""
 
     response = llm.invoke(prompt)
     return response.content
