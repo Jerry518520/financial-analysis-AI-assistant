@@ -35,9 +35,10 @@ COPY pyproject.toml poetry.lock* ./
 
 # ⚠️ 预装 PyTorch CUDA 版（从阿里云 pytorch-wheels 镜像源）
 # 标准 PyPI 上的 torch 是 CPU 版，RAG 向量化需要 GPU 加速
-# -f 指定 find-links 源，cu121 版本向前兼容 CUDA 12.4/12.6
+# --extra-index-url 指定 cu121 镜像源，pip 优先从这里找 CUDA 版 wheel
+# 不能用 -f（find-links），因为 pip 会同时去 PyPI 解析依赖导致版本冲突
 RUN pip install --no-cache-dir "torch==2.10.0" \
-    -f https://mirrors.aliyun.com/pytorch-wheels/cu121/
+    --extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu121/
 
 # 安装其余依赖 (包含生产依赖和测试依赖)
 RUN poetry install --no-root --no-interaction --no-ansi
