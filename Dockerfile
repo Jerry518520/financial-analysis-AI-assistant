@@ -28,7 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 Poetry (改为使用 pip + 国内镜像安装，解决官方脚本网络连接问题)
-RUN pip install --no-cache-dir poetry==${POETRY_VERSION} -i https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir --timeout=120 --retries 5 \
+    poetry==${POETRY_VERSION} \
+    -i https://mirrors.aliyun.com/pypi/simple/
 
 # 复制依赖定义文件
 COPY pyproject.toml poetry.lock* ./
