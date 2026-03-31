@@ -33,12 +33,12 @@ RUN pip install --no-cache-dir poetry==${POETRY_VERSION} -i https://mirrors.aliy
 # 复制依赖定义文件
 COPY pyproject.toml poetry.lock* ./
 
-# ⚠️ 预装 PyTorch CUDA 版（从阿里云 pytorch-wheels 镜像源）
-# 标准 PyPI 上的 torch 是 CPU 版，RAG 向量化需要 GPU 加速
-# --extra-index-url 指定 cu121 镜像源，pip 优先从这里找 CUDA 版 wheel
-# 不能用 -f（find-links），因为 pip 会同时去 PyPI 解析依赖导致版本冲突
+# ⚠️ 预装 PyTorch CUDA 版
+# --index-url 指向阿里云 pytorch-wheels cu121，彻底不走 PyPI（Docker 内访问 PyPI 会超时）
+# --no-deps 先只装 torch 本体，typing-extensions 等依赖由后续 poetry install 统一处理
 RUN pip install --no-cache-dir "torch==2.10.0" \
-    --extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu121/
+    --index-url https://mirrors.aliyun.com/pytorch-wheels/cu121/ \
+    --no-deps
 
 # 安装其余依赖 (包含生产依赖和测试依赖)
 RUN poetry install --no-root --no-interaction --no-ansi
