@@ -38,9 +38,10 @@ services:
     ports:
       - "8501:8501"
     environment:
-      # 注意：Streamlit 前端在用户浏览器中运行图片加载
-      # 所以 API_URL 必须是浏览器可访问的地址，而不是 Docker 内部域名
-      - API_URL=http://host.docker.internal:8000
+      # API_URL 是 Streamlit 服务端（Python 进程）调用 backend 用的
+      # backend 也在 Docker 容器中，必须用 Docker 内部网络域名 http://backend:8000
+      # 不要用 host.docker.internal（那是访问宿主机用的）
+      - API_URL=http://backend:8000
     depends_on:
       - backend
     command: streamlit run frontend/main.py --server.address 0.0.0.0 --server.port 8501
