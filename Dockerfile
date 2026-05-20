@@ -4,14 +4,9 @@ FROM docker.m.daocloud.io/python:3.11-slim
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=2.0.1 \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_CREATE=false \
     PYTHONPATH="/app/src" \
-    HF_ENDPOINT=https://hf-mirror.com
-
-# 将 Poetry 添加到 PATH
-ENV PATH="$POETRY_HOME/bin:$PATH"
+    HF_ENDPOINT=https://hf-mirror.com \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 # 设置工作目录
 WORKDIR /app
@@ -20,33 +15,26 @@ WORKDIR /app
 # 替换 apt 源为阿里云镜像以解决网络超时问题
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
 
-# curl: 用于下载 poetry
 # build-essential: 某些 python 库编译需要
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Poetry (改为使用 pip + 国内镜像安装，解决官方脚本网络连接问题)
-RUN pip install --no-cache-dir --timeout=120 --retries 5 \
-    poetry==${POETRY_VERSION} \
-    -i https://mirrors.aliyun.com/pypi/simple/
-
-# 复制依赖定义文件
-COPY pyproject.toml poetry.lock* ./
-
-# ⚠️ 预装 PyTorch CUDA 版（cu126，阿里云镜像源）
-# 直接下载 wheel 文件安装，不走 PyPI，避免 Docker 内网络超时和依赖冲突
-# --no-deps 只装 torch 本体，typing-extensions 等依赖由后续 poetry install 统一处理
-RUN pip install --no-cache-dir --no-deps \
+# ====== 第一层：PyTorch CUDA（独立缓存层，版本变更时才重建）======
+# 阿里云镜像直装 CUDA wheel，不走 PyPI
+# --no-deps: typing-extensions 等由后续 pip install 统一处理
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir --no-deps \
     https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl
 
-# 安装其余依赖 (包含生产依赖和测试依赖)
-RUN poetry install --no-root --no-interaction --no-ansi
+# ====== 第二层：其余 Python 依赖（requirements-docker.txt 不含 torch）======
+# poetry export --without-hashes --only main 生成，排除 dev 依赖
+COPY requirements-docker.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r requirements-docker.txt
 
-# 复制项目代码和测试代码
+# ====== 第三层：项目代码（变更最频繁，放最后）======
 COPY src/ ./src/
-COPY tests/ ./tests/
 COPY frontend/ ./frontend/
 
 # 创建必要的缓存目录

@@ -1,0 +1,12 @@
+fix: Docker构建优化 + SyntaxError修复
+
+Docker构建优化:
+- 干掉Poetry，改用 poetry export + pip install -r
+- 新增 requirements-docker.txt（仅main依赖，torch行已移除）
+- torch版本钉死 >=2.10.0,<2.11.0 防止升级重下2GB
+- 三层缓存分离：torch CUDA -> pip依赖 -> 项目代码
+- .dockerignore新增忽略poetry.lock/pyproject.toml/tests/
+
+SyntaxError修复:
+- agent.py: system_text f-string缺少闭合triple-quote，L277前插入
+- main.py: f-string内backslash-n.join()含反斜杠，提取为变量

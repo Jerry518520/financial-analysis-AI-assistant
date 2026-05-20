@@ -167,11 +167,12 @@ def _build_enhanced_context(current_context: str, history: list, current_questio
     for i, (q, a) in enumerate(history[-5:]):  # 只取最近 5 轮
         history_data.append(f"【历史问题 {i+1}】{q}\n【历史回答 {i+1}】{a[:500]}...")  # 截断避免过长
     
+    history_joined = "\n\n".join(history_data)
     enhanced = f"""【当前问题相关文档】
 {current_context}
 
 【历史对话记录（用于数据复用）】
-{"\n\n".join(history_data)}
+{history_joined}
 
 【重要提示】
 1. 如果当前问题需要的数据在历史回答中已经计算过，请直接使用历史数据，不要重新检索
