@@ -278,30 +278,9 @@ def get_current_pdf_hash() -> str:
     return _current_pdf_hash
 
 def _rebuild_page_num_map(full_text: str, max_chars_per_chunk: int = 3000):
-    """重建页码映射表（必须与 _split_by_page 的分块逻辑完全一致）"""
-    global PAGE_NUM_MAP
-    PAGE_NUM_MAP = {}
-
-    page_pattern = r'--- Page (\d+) ---\n'
-    parts = re.split(page_pattern, full_text)
-
-    doc_index = 0
-    i = 1
-    while i < len(parts):
-        page_num = int(parts[i])
-        content = parts[i + 1] if i + 1 < len(parts) else ""
-        if content.strip():
-            if len(content) > max_chars_per_chunk:
-                # 长页面切分成多个子块，每个子块都映射到同一页码
-                sub_chunks = [content[j:j+max_chars_per_chunk] for j in range(0, len(content), max_chars_per_chunk)]
-                for sub_chunk in sub_chunks:
-                    PAGE_NUM_MAP[doc_index] = page_num
-                    doc_index += 1
-            else:
-                PAGE_NUM_MAP[doc_index] = page_num
-                doc_index += 1
-        i += 2
-
+    """重建页码映射表（复用 _split_by_page 的拆分逻辑，确保表格检测一致）"""
+    # _split_by_page 会同时重建 PAGE_NUM_MAP（全局副作用）
+    _split_by_page(full_text, max_chars_per_chunk)
     print(f"📄 PAGE_NUM_MAP 已重建: {PAGE_NUM_MAP}")
 
 def _load_vector_store_internal():
@@ -323,8 +302,8 @@ def _load_vector_store_internal():
             return True
         except Exception as e:
             print(f"⚠️ 本地索引加载失败: {e}")
-            # 加载失败时清空内存，防止旧数据残留
             vector_store = None
+            _clear_index()  # 删除损坏文件，防止无限重试
             return False
     return False
 
@@ -333,7 +312,7 @@ def load_vector_store():
     with _vector_store_lock:
         return _load_vector_store_internal()
 
-def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.2):
+def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.4):
     """
     查询 RAG，返回合并后的相关文档内容。
     
@@ -372,7 +351,7 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.2):
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
     return "\n\n".join([doc.page_content for doc, _ in filtered])
 
-def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: float = 0.2) -> Dict[str, Any]:
+def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: float = 0.4) -> Dict[str, Any]:
     """
     查询 RAG 并返回上下文 + 来源页码。
     

@@ -414,7 +414,8 @@ def call_chat_api(prompt, history=None):
     """
     payload = {
         "question": prompt,
-        "conversation_history": history or []
+        "conversation_history": history or [],
+        "pdf_hash": st.session_state.get("current_pdf_hash", "")
     }
     res = requests.post(f"{API_URL}/chat", json=payload, timeout=120)
 
@@ -577,9 +578,8 @@ def _process_chat(prompt):
         ]
         for pct, text in steps:
             progress_bar.progress(pct, text=text)
-            # 每步等待最多 15 秒（Agent 深度分析耗时较长）
             t.join(timeout=15)
-            if not t.is_alive():
+            if not t.is_alive() or chat_result["error"]:
                 break
 
         # 如果线程还在跑，继续等待（最多再等 120 秒）

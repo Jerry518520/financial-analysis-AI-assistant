@@ -464,3 +464,170 @@ class TestFormatToolResults:
         from financial_report_ai_assistant.core.agent import _format_tool_results
         result = _format_tool_results(["[工具调用] roe → 15%"])
         assert "[工具调用]" in result
+
+
+# ============================================================
+# 11. _safe_float - 数值提取
+# ============================================================
+class TestSafeFloat:
+    def test_int_input(self):
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float(42) == 42.0
+
+    def test_float_input(self):
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float(3.14) == 3.14
+
+    def test_string_number(self):
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float("123.45") == 123.45
+
+    def test_string_with_unit(self):
+        """'100万' 应提取出 100.0"""
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float("100万") == 100.0
+
+    def test_string_with_percent(self):
+        """'15.5%' 应提取出 15.5"""
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float("15.5%") == 15.5
+
+    def test_string_with_comma(self):
+        """'1,234.56' 应提取出 1234.56"""
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float("1,234.56") == 1234.56
+
+    def test_negative_string(self):
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float("-500") == -500.0
+
+    def test_non_numeric_string(self):
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float("abc") is None
+
+    def test_none_input(self):
+        from financial_report_ai_assistant.core.agent import _safe_float
+        assert _safe_float(None) is None
+
+
+# ============================================================
+# 12. _validate_tool_args - 工具参数校验
+# ============================================================
+class TestValidateToolArgs:
+    def test_valid_numeric_args(self):
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_calculate_growth_rate", {"current": 1200, "previous": 1000})
+        assert result["current"] == 1200.0
+        assert result["previous"] == 1000.0
+
+    def test_string_numeric_args(self):
+        """LLM 可能传字符串数字如 '100万'"""
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_calculate_margin", {"profit": "300万", "revenue": "1000万"})
+        assert result["profit"] == 300.0
+        assert result["revenue"] == 1000.0
+
+    def test_invalid_args_filtered_out(self):
+        """无效参数应被过滤，不传给工具"""
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_calculate_growth_rate", {"current": "abc", "previous": 1000})
+        assert "current" not in result
+        assert result["previous"] == 1000.0
+
+    def test_none_args_skipped(self):
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_calculate_roe", {"net_income": None, "equity": 1000})
+        assert "net_income" not in result
+        assert result["equity"] == 1000.0
+
+    def test_list_args_validated(self):
+        """列表参数应逐个验证"""
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_analyze_trend", {"values": [100, "200万", "abc", 300]})
+        assert result["values"] == [100.0, 200.0, 300.0]
+
+    def test_empty_args(self):
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_calculate_growth_rate", {})
+        assert result == {}
+
+
+# ============================================================
+# 13. generate_recommendations - JSON 解析失败路径
+# ============================================================
+class TestGenerateRecommendations:
+    @patch("financial_report_ai_assistant.services.ai_chat.get_llm")
+    def test_valid_json_response(self, mock_get_llm):
+        """LLM 返回有效 JSON 数组"""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = '["问题1", "问题2", "问题3"]'
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import generate_recommendations
+        result = generate_recommendations("营收是多少", "营收为1000万")
+        assert result == ["问题1", "问题2", "问题3"]
+
+    @patch("financial_report_ai_assistant.services.ai_chat.get_llm")
+    def test_json_with_extra_text(self, mock_get_llm):
+        """LLM 返回 JSON 带额外文字，应能提取 JSON 数组"""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = '以下是推荐问题：\n["问题A", "问题B", "问题C"]\n希望有帮助。'
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import generate_recommendations
+        result = generate_recommendations("净利润", "净利润为500万")
+        assert result == ["问题A", "问题B", "问题C"]
+
+    @patch("financial_report_ai_assistant.services.ai_chat.get_llm")
+    def test_completely_invalid_json(self, mock_get_llm):
+        """LLM 返回完全无法解析的内容，应返回默认推荐"""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = '抱歉，我无法生成推荐问题。'
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import generate_recommendations
+        result = generate_recommendations("测试", "回答")
+        assert result == ["净利润是多少", "营业收入是多少", "毛利率是多少"]
+
+    @patch("financial_report_ai_assistant.services.ai_chat.get_llm")
+    def test_llm_exception_returns_defaults(self, mock_get_llm):
+        """LLM 调用抛异常时应返回默认推荐"""
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = Exception("API 超时")
+        mock_get_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import generate_recommendations
+        result = generate_recommendations("测试", "回答")
+        assert result == ["净利润是多少", "营业收入是多少", "毛利率是多少"]
+
+    @patch("financial_report_ai_assistant.services.ai_chat.get_llm")
+    def test_empty_list_returns_defaults(self, mock_get_llm):
+        """LLM 返回空列表时应返回默认推荐"""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = '[]'
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import generate_recommendations
+        result = generate_recommendations("测试", "回答")
+        assert result == ["净利润是多少", "营业收入是多少", "毛利率是多少"]
+
+    @patch("financial_report_ai_assistant.services.ai_chat.get_llm")
+    def test_more_than_3_truncated(self, mock_get_llm):
+        """超过 3 个推荐时应截断"""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = '["Q1", "Q2", "Q3", "Q4", "Q5"]'
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        from financial_report_ai_assistant.core.agent import generate_recommendations
+        result = generate_recommendations("测试", "回答")
+        assert len(result) == 3

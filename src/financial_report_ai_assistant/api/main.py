@@ -20,11 +20,13 @@ from financial_report_ai_assistant.core.agent import run_agent_query, generate_r
 from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, RAG_NOT_FOUND
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
+import threading
 
 app = FastAPI(title="AI 财报分析助手")
 
 # 【新增】保存当前 PDF 路径，供 /highlight 使用
 CURRENT_PDF_PATH = None
+_current_pdf_lock = threading.Lock()
 CACHE_DIR = "cache_data"
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB 上传限制
 
@@ -41,6 +43,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     question: str
     conversation_history: list = []  # 历史对话记录 [(question, answer), ...]
+    pdf_hash: str = ""  # 前端当前文档哈希，用于校验历史数据一致性
 
 @app.get("/")
 def read_root():
@@ -61,7 +64,8 @@ async def upload_financial_report(file: UploadFile = File(...)):
         pdf_path = os.path.join(CACHE_DIR, f"current_{file_hash}.pdf")
         with open(pdf_path, "wb") as f:
             f.write(content)
-        CURRENT_PDF_PATH = pdf_path
+        with _current_pdf_lock:
+            CURRENT_PDF_PATH = pdf_path
         print(f"📁 PDF 已保存: {pdf_path}")
 
         # 1. 解析 PDF (获取全量文本)
@@ -139,8 +143,14 @@ async def chat_with_report(request: ChatRequest):
         enhanced_context = _build_enhanced_context(
             current_context=relevant_context,
             history=request.conversation_history,
-            current_question=request.question
+            current_question=request.question,
+            request_pdf_hash=request.pdf_hash
         )
+
+        # 将有效页码列表注入上下文，约束 LLM 只能引用实际存在的页码
+        if source_pages:
+            pages_str = "、".join(str(p) for p in source_pages)
+            enhanced_context += f"\n\n【有效来源页码】：第 {pages_str} 页（回答中引用的页码必须来自此列表）"
 
         # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
         from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
@@ -168,20 +178,25 @@ async def chat_with_report(request: ChatRequest):
         return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
 
 
-def _build_enhanced_context(current_context: str, history: list, current_question: str) -> str:
+def _build_enhanced_context(current_context: str, history: list, current_question: str, request_pdf_hash: str = "") -> str:
     """
-    构建增强上下文：合并当前 RAG 结果 + 从历史对话中提取的数值数据
-    
-    这样 Agent 可以看到之前计算的结果，实现跨对话的数据复用
+    构建增强上下文：合并当前 RAG 结果 + 从历史对话中提取的数值数据。
+    如果 request_pdf_hash 与当前索引文档不一致，跳过历史注入防止跨文档数据污染。
     """
     if not history:
         return current_context
-    
+
+    # 文档一致性校验：历史数据可能来自不同文档，跳过注入
+    current_hash = get_current_pdf_hash()
+    if request_pdf_hash and current_hash and request_pdf_hash != current_hash:
+        print(f"⚠️ 历史数据文档不一致 (请求hash={request_pdf_hash[:8]}..., 当前hash={current_hash[:8]}...)，跳过历史注入")
+        return current_context
+
     # 从历史对话中提取数值数据（问答对）
     history_data = []
     for i, (q, a) in enumerate(history[-5:]):  # 只取最近 5 轮
         history_data.append(f"【历史问题 {i+1}】{q}\n【历史回答 {i+1}】{a[:500]}...")  # 截断避免过长
-    
+
     history_joined = "\n\n".join(history_data)
     enhanced = f"""【当前问题相关文档】
 {current_context}
@@ -190,10 +205,10 @@ def _build_enhanced_context(current_context: str, history: list, current_questio
 {history_joined}
 
 【重要提示】
-1. 如果当前问题需要的数据在历史回答中已经计算过，请直接使用历史数据，不要重新检索
-2. 如果历史回答中已有毛利率、净利率、ROE 等指标计算结果，请优先使用这些数值
-3. 如果用户问"刚才计算的毛利率是多少"，请从历史回答中找到具体数值回答"""
-    
+1. 历史数据仅来自同一份文档，可以直接复用已计算的指标
+2. 如果用户问"刚才计算的毛利率是多少"，请从历史回答中找到具体数值回答
+3. 所有数值必须来自上述文档内容或历史计算结果，禁止编造"""
+
     return enhanced
 
 @app.get("/highlight")
@@ -205,14 +220,16 @@ async def highlight_page(
     h: float = Query(50, ge=1, description="高度")
 ):
     global CURRENT_PDF_PATH
-    if not CURRENT_PDF_PATH or not os.path.exists(CURRENT_PDF_PATH):
+    with _current_pdf_lock:
+        pdf_path = CURRENT_PDF_PATH
+    if not pdf_path or not os.path.exists(pdf_path):
         return JSONResponse(status_code=404, content={"error": "PDF 未上传或不存在"})
 
     try:
         import fitz
         from PIL import Image, ImageDraw
 
-        doc = fitz.open(CURRENT_PDF_PATH)
+        doc = fitz.open(pdf_path)
         page_index = page - 1
         if page_index >= len(doc):
             page_index = len(doc) - 1

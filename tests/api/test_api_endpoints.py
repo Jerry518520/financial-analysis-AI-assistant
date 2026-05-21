@@ -233,3 +233,91 @@ class TestAnalyzeSummary:
         """使用 financial focus"""
         resp = client.post("/analyze/summary", json={"focus": "financial"})
         assert resp.status_code == 200
+
+
+# ============================================================
+# 7. _build_enhanced_context - 增强上下文构建
+# ============================================================
+class TestBuildEnhancedContext:
+    def test_no_history_returns_current_context(self):
+        """无历史记录时直接返回当前上下文"""
+        from financial_report_ai_assistant.api.main import _build_enhanced_context
+        result = _build_enhanced_context(
+            current_context="营收1000万",
+            history=[],
+            current_question="净利润是多少？"
+        )
+        assert result == "营收1000万"
+
+    def test_pdf_hash_mismatch_skips_history(self):
+        """pdf_hash 不一致时跳过历史注入，防止跨文档数据污染"""
+        from financial_report_ai_assistant.api.main import _build_enhanced_context
+        with patch("financial_report_ai_assistant.api.main.get_current_pdf_hash", return_value="hash_abc"):
+            result = _build_enhanced_context(
+                current_context="营收1000万",
+                history=[("之前的问题", "之前的回答")],
+                current_question="净利润是多少？",
+                request_pdf_hash="hash_xyz"  # 与当前 hash 不一致
+            )
+        # 历史记录不应被注入
+        assert "历史问题" not in result
+        assert "营收1000万" in result
+
+    def test_pdf_hash_match_includes_history(self):
+        """pdf_hash 一致时注入历史记录"""
+        from financial_report_ai_assistant.api.main import _build_enhanced_context
+        with patch("financial_report_ai_assistant.api.main.get_current_pdf_hash", return_value="hash_abc"):
+            result = _build_enhanced_context(
+                current_context="营收1000万",
+                history=[("营收是多少", "营收为1000万")],
+                current_question="增长率？",
+                request_pdf_hash="hash_abc"  # 一致
+            )
+        assert "历史问题" in result
+        assert "营收1000万" in result
+
+    def test_empty_request_hash_still_injects_history(self):
+        """request_pdf_hash 为空时仍注入历史（兼容旧版前端）"""
+        from financial_report_ai_assistant.api.main import _build_enhanced_context
+        with patch("financial_report_ai_assistant.api.main.get_current_pdf_hash", return_value="hash_abc"):
+            result = _build_enhanced_context(
+                current_context="营收1000万",
+                history=[("营收是多少", "营收为1000万")],
+                current_question="增长率？",
+                request_pdf_hash=""  # 旧版前端不传 hash
+            )
+        assert "历史问题" in result
+
+    def test_history_truncated_to_5_rounds(self):
+        """历史记录最多取最近 5 轮"""
+        from financial_report_ai_assistant.api.main import _build_enhanced_context
+        history = [(f"问题{i}", f"回答{i}") for i in range(10)]
+        with patch("financial_report_ai_assistant.api.main.get_current_pdf_hash", return_value="h"):
+            result = _build_enhanced_context(
+                current_context="上下文",
+                history=history,
+                current_question="当前问题",
+                request_pdf_hash="h"
+            )
+        # 只有最后 5 轮（索引 5-9）
+        assert "历史问题 1" in result  # 第 1 条（对应原索引 5）
+        assert "问题5" in result
+        assert "问题4" not in result  # 原索引 4 不在最近 5 轮内
+
+
+# ============================================================
+# 8. POST /chat - RAG 未找到时提前返回
+# ============================================================
+class TestChatRagNotFound:
+    def test_rag_not_found_returns_early(self, client):
+        """RAG 未检索到相关内容时应提前返回提示"""
+        from financial_report_ai_assistant.api.main import query_rag_with_source
+        query_rag_with_source.return_value = {
+            "context": "未找到与问题高度相关的内容。请确认问题是否与当前上传的财报相关，或尝试换个问法。",
+            "page_num": 1,
+            "source_pages": []
+        }
+        resp = client.post("/chat", json={"question": "完全无关的问题"})
+        data = resp.json()
+        assert "未找到" in data["answer"]
+        assert data["source_pages"] == []

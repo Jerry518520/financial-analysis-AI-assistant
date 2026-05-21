@@ -21,6 +21,8 @@ def get_llm():
             api_key=api_key,
             base_url="https://api.deepseek.com",
             temperature=0.3,
+            timeout=60,
+            max_retries=2,
         )
     return _llm_instance
 

@@ -70,7 +70,11 @@ async def generate_report_summary(request: AnalysisRequest):
     full_context = "\n---\n".join(contexts)
     if len(full_context) > MAX_CONTEXT_CHARS:
         print(f"⚠️ 上下文长度 {len(full_context)} 超过限制 {MAX_CONTEXT_CHARS}，进行截断")
-        full_context = full_context[:MAX_CONTEXT_CHARS] + "\n\n[... 上下文已截断 ...]"
+        # 截断到最近的换行符，避免切断数字
+        cut_pos = full_context.rfind("\n", 0, MAX_CONTEXT_CHARS)
+        if cut_pos < MAX_CONTEXT_CHARS // 2:
+            cut_pos = MAX_CONTEXT_CHARS  # 换行符太远，直接硬截断
+        full_context = full_context[:cut_pos] + "\n\n[... 上下文已截断 ...]"
     
     # 2. 根据 focus 调整生成提示
     focus_instructions = {

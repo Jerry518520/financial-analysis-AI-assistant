@@ -237,6 +237,66 @@ class TestQueryRagWithSource:
         result = query_rag_with_source("测试")
         assert result["page_num"] == 1
 
+    @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
+    def test_low_score_below_threshold_rejected(self, mock_load):
+        """所有文档相似度低于 0.4 阈值时应拒绝返回无关数据"""
+        mock_store = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.page_content = "无关内容"
+        mock_doc.metadata = {"page_num": 3}
+        # 相似度 0.3 < 0.4 阈值
+        mock_store.similarity_search_with_score.return_value = [(mock_doc, 0.3)]
+
+        import financial_report_ai_assistant.services.rag_service as rag_module
+        rag_module.vector_store = mock_store
+
+        from financial_report_ai_assistant.services.rag_service import query_rag_with_source
+        result = query_rag_with_source("完全无关的问题")
+        assert "未找到" in result["context"]
+        assert result["source_pages"] == []
+
+    @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
+    def test_high_score_above_threshold_accepted(self, mock_load):
+        """相似度高于 0.4 阈值的文档应被接受"""
+        mock_store = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.page_content = "营收1000万"
+        mock_doc.metadata = {"page_num": 2}
+        # 相似度 0.7 > 0.4 阈值
+        mock_store.similarity_search_with_score.return_value = [(mock_doc, 0.7)]
+
+        import financial_report_ai_assistant.services.rag_service as rag_module
+        rag_module.vector_store = mock_store
+
+        from financial_report_ai_assistant.services.rag_service import query_rag_with_source
+        result = query_rag_with_source("营收是多少")
+        assert "营收1000万" in result["context"]
+        assert result["page_num"] == 2
+
+    @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
+    def test_mixed_scores_filter_correctly(self, mock_load):
+        """混合分数时应只保留高于阈值的文档"""
+        mock_store = MagicMock()
+        doc_high = MagicMock()
+        doc_high.page_content = "高相关文档"
+        doc_high.metadata = {"page_num": 1}
+        doc_low = MagicMock()
+        doc_low.page_content = "低相关文档"
+        doc_low.metadata = {"page_num": 5}
+        # 一个高分一个低分
+        mock_store.similarity_search_with_score.return_value = [
+            (doc_high, 0.8),
+            (doc_low, 0.2),
+        ]
+
+        import financial_report_ai_assistant.services.rag_service as rag_module
+        rag_module.vector_store = mock_store
+
+        from financial_report_ai_assistant.services.rag_service import query_rag_with_source
+        result = query_rag_with_source("测试问题")
+        assert "高相关文档" in result["context"]
+        assert "低相关文档" not in result["context"]
+
 
 # ============================================================
 # 8. build_vector_store - 向量库构建（mock 外部依赖）
