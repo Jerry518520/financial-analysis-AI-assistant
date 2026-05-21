@@ -40,6 +40,10 @@ PAGE_NUM_MAP: Dict[int, int] = {}
 _current_pdf_hash: str = ""  # 当前向量库对应的 PDF 哈希，用于检测文档切换
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+# RAG 查询结果状态常量（供 main.py / analysis.py 使用）
+RAG_NOT_FOUND = "未找到"
+RAG_INDEX_MISSING = "系统提示：知识库尚未建立"
+
 # Docker 挂载: ./faiss_index:/app/faiss_index
 # 本地开发: PROJECT_ROOT / "faiss_index"
 # 通过环境变量或固定路径 /app/faiss_index 统一
@@ -175,6 +179,14 @@ def _enhance_table_content(content: str, page_num: int) -> str:
     
     return content
 
+def _reset_index_state():
+    """清空索引磁盘文件 + 内存状态（vector_store / PAGE_NUM_MAP）。
+    必须在 _vector_store_lock 内调用。"""
+    global vector_store, PAGE_NUM_MAP
+    _clear_index()
+    vector_store = None
+    PAGE_NUM_MAP = {}
+
 def build_vector_store(full_text: str, pdf_hash: str = ""):
     """
     构建 RAG 向量库。
@@ -191,7 +203,6 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
 
     with _vector_store_lock:
         try:
-            # 检查是否可以复用旧索引（同一次 PDF 的重复上传）
             if pdf_hash:
                 old_hash = ""
                 if INDEX_HASH_PATH.exists():
@@ -204,22 +215,14 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                         print("✅ 使用已有索引，跳过重建")
                         return True
                     else:
-                        # 加载失败，清空内存中的旧数据，强制重建
                         print("⚠️ 旧索引加载失败，清空内存并强制重建")
                         vector_store = None
                 else:
-                    # PDF 不同，删除旧索引
                     if old_hash and old_hash != pdf_hash:
                         print(f"🔄 检测到新文件 (旧hash={old_hash[:8]}..., 新hash={pdf_hash[:8]}...)，删除旧索引并重建")
-                    _clear_index()
-                    # 【关键】立即清空内存中的旧向量库，防止查询到已删除文档的数据
-                    vector_store = None
-                    PAGE_NUM_MAP = {}
+                    _reset_index_state()
             else:
-                # 无 hash，强制重建（防御性清空）
-                _clear_index()
-                vector_store = None
-                PAGE_NUM_MAP = {}
+                _reset_index_state()
 
             print("🔄 正在加载 embedding 模型...")
             embeddings = SentenceTransformerEmbeddings(
@@ -243,11 +246,10 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             INDEX_PATH.mkdir(parents=True, exist_ok=True)
             new_store.save_local(str(INDEX_PATH))
 
-            # 构建成功后才替换全局变量（原子操作，避免中间状态被查询到）
+            # 构建成功后才替换全局变量，避免中间状态被查询到
             vector_store = new_store
             _current_pdf_hash = pdf_hash
 
-            # 保存当前 PDF 哈希，下次上传可比对
             if pdf_hash:
                 INDEX_HASH_PATH.write_text(pdf_hash)
 
@@ -259,7 +261,6 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             import traceback
             print(f"❌ RAG 构建失败: {e}")
             print(f"❌ 详细错误: {traceback.format_exc()}")
-            # 构建失败时清空内存，防止旧数据被查询
             vector_store = None
             PAGE_NUM_MAP = {}
             return False

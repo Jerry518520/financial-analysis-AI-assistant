@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from financial_report_ai_assistant.services.rag_service import query_rag_with_source
+from financial_report_ai_assistant.services.rag_service import query_rag_with_source, RAG_NOT_FOUND, RAG_INDEX_MISSING
 from financial_report_ai_assistant.services.ai_chat import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -59,7 +59,7 @@ async def generate_report_summary(request: AnalysisRequest):
         # 每个 query 找 top 2，避免上下文过长
         result = await asyncio.to_thread(query_rag_with_source, q, 2)
         ctx = result.get("context", "")
-        if ctx and "系统提示：知识库尚未建立" not in ctx and "未找到" not in ctx:
+        if ctx and RAG_INDEX_MISSING not in ctx and RAG_NOT_FOUND not in ctx:
             contexts.append(ctx)
             all_source_pages.update(result.get("source_pages", []))
 

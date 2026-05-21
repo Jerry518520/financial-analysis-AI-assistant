@@ -17,7 +17,7 @@ from financial_report_ai_assistant.services.document_parser import parse_pdf_byt
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
 from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
-from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, RAG_NOT_FOUND
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
 
@@ -127,7 +127,7 @@ async def chat_with_report(request: ChatRequest):
         print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")
 
         # RAG 未找到相关内容时，直接返回提示，不浪费 LLM 调用
-        if "未找到" in relevant_context and not request.conversation_history:
+        if RAG_NOT_FOUND in relevant_context and not request.conversation_history:
             return {
                 "answer": "财报中未找到与该问题相关的数据。请确认问题是否与当前上传的财报相关，或尝试换个问法。",
                 "source_page": 1,

@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from typing import TypedDict, List, Annotated
 import operator
 import os
+import re
 from dotenv import load_dotenv
 from financial_report_ai_assistant.services.financial_calculator import (
     calculate_growth_rate, calculate_margin, calculate_roe, format_percentage,
@@ -218,6 +219,21 @@ class AgentState(TypedDict):
 
 _TOOL_MAP: dict = {}  # 工具名 → 工具函数
 
+_NUM_PATTERN = re.compile(r'-?[\d,]+\.?\d*')
+
+def _safe_float(value) -> float | None:
+    """从数值或字符串中安全提取 float。LLM 可能传 '100万'、'15.5%' 等格式。"""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        m = _NUM_PATTERN.search(value.replace(',', ''))
+        if m:
+            try:
+                return float(m.group().replace(',', ''))
+            except ValueError:
+                pass
+    return None
+
 def _validate_tool_args(tool_name: str, tool_args: dict) -> dict:
     """校验工具参数：确保数值参数是有效的 float，列表参数是有效的 list[float]。
     无效参数会被跳过（不传给工具），让工具自身的除零保护处理缺失参数。"""
@@ -225,37 +241,16 @@ def _validate_tool_args(tool_name: str, tool_args: dict) -> dict:
     for key, value in tool_args.items():
         if value is None:
             continue
-        if isinstance(value, (int, float)):
-            validated[key] = float(value)
-        elif isinstance(value, str):
-            # 尝试从字符串中提取数字（LLM 可能传 "100万" 或 "15.5%"）
-            import re
-            num_match = re.search(r'-?[\d,]+\.?\d*', value.replace(',', ''))
-            if num_match:
-                try:
-                    validated[key] = float(num_match.group().replace(',', ''))
-                except ValueError:
-                    print(f"⚠️ 参数 {key} 无法转换为数字: {value}")
-            else:
-                print(f"⚠️ 参数 {key} 不是有效数字: {value}")
-        elif isinstance(value, list):
-            # 列表参数：过滤非数字元素
-            nums = []
-            for item in value:
-                if isinstance(item, (int, float)):
-                    nums.append(float(item))
-                elif isinstance(item, str):
-                    import re
-                    m = re.search(r'-?[\d,]+\.?\d*', item.replace(',', ''))
-                    if m:
-                        try:
-                            nums.append(float(m.group().replace(',', '')))
-                        except ValueError:
-                            pass
+        if isinstance(value, list):
+            nums = [n for item in value if (n := _safe_float(item)) is not None]
             if nums:
                 validated[key] = nums
         else:
-            print(f"⚠️ 参数 {key} 类型不支持: {type(value)}")
+            n = _safe_float(value)
+            if n is not None:
+                validated[key] = n
+            else:
+                print(f"⚠️ 参数 {key} 不是有效数字: {value}")
     return validated
 
 
