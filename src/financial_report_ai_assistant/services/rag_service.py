@@ -17,7 +17,13 @@ from langchain_core.documents import Document
 
 
 class SentenceTransformerEmbeddings(Embeddings):
-    def __init__(self, model_name: str, device: str = "cpu"):
+    def __init__(self, model_name: str, device: str = None):
+        if device is None:
+            try:
+                device = get_device()
+            except RuntimeError:
+                print("⚠️ CUDA 不可用，回退到 CPU（向量化会很慢）")
+                device = "cpu"
         self.model = SentenceTransformer(model_name, device=device)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -311,15 +317,10 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.2):
 
     with _vector_store_lock:
         if vector_store is None:
-            pass  # 需要在锁外调用 load_vector_store（它有自己的锁）
-
-    if vector_store is None:
-        print("⚠️ vector_store 为空，尝试加载...")
-        if not load_vector_store():
-            print("❌ 加载失败，返回错误消息")
-            return "系统提示：知识库尚未建立，且无本地缓存。"
-
-    with _vector_store_lock:
+            print("⚠️ vector_store 为空，尝试加载...")
+            if not _load_vector_store_internal():
+                print("❌ 加载失败，返回错误消息")
+                return "系统提示：知识库尚未建立，且无本地缓存。"
         print("✅ vector_store 已就绪，执行相似度搜索...")
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 
@@ -358,15 +359,10 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
 
     with _vector_store_lock:
         if vector_store is None:
-            pass  # 需要在锁外调用 load_vector_store
-
-    if vector_store is None:
-        print("⚠️ vector_store 为空，尝试加载...")
-        if not load_vector_store():
-            print("❌ 加载失败")
-            return {"context": "系统提示：知识库尚未建立。", "page_num": 1}
-
-    with _vector_store_lock:
+            print("⚠️ vector_store 为空，尝试加载...")
+            if not _load_vector_store_internal():
+                print("❌ 加载失败")
+                return {"context": "系统提示：知识库尚未建立。", "page_num": 1}
         print("✅ vector_store 已就绪，执行相似度搜索...")
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 

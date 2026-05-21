@@ -1,282 +1,209 @@
-# 🤖 财报AI分析助手 (Financial Report AI Assistant)
+# 财报AI分析助手 (Financial Report AI Assistant)
 
-<!-- 这一行是徽章(Badges)，它们是项目状态的可视化标志，非常专业。 -->
 <p align="center">
   <img alt="Python Version" src="https://img.shields.io/badge/python-3.11-blue">
   <img alt="Framework" src="https://img.shields.io/badge/Backend-FastAPI-green">
   <img alt="Framework" src="https://img.shields.io/badge/Frontend-Streamlit-red">
   <img alt="Deploy" src="https://img.shields.io/badge/Docker-Ready-blue">
+  <img alt="GPU" src="https://img.shields.io/badge/GPU-CUDA_12.6-green">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-lightgrey">
 </p>
 
-> ⚠️ **项目状态：MVP (最小可行性产品) 已完成**
-> 这是一个旨在学习和展示现代AI应用开发全流程的项目。
-
-这是一个Web应用，旨在利用大语言模型（LLM）的能力，帮助非金融专业人士轻松读懂并分析上市公司的PDF格式财务报表。用户只需上传一份财报，即可通过自然语言进行提问、要求计算和生成通俗易懂的摘要。
+利用大语言模型（LLM）帮助非金融专业人士读懂上市公司 PDF 财报。上传财报，用自然语言提问、计算指标、生成摘要。
 
 ---
 
-## ✨ 核心功能
+## 核心功能
 
-*   **📄 智能PDF解析**: 集成 **LlamaParse**，支持从复杂的中文财报PDF中提取文本和无边框表格。
-*   **💬 核心指标问答**: 基于 **RAG (检索增强生成)** 技术，精准回答关于营收、净利润等具体数据的问题。
-*   **🧠 真正的 AI Agent**: 基于 **LangGraph** 构建的自主推理 Agent，具备：
-    *   📋 **任务规划**: 将复杂问题分解为多个子步骤
-    *   ⚙️ **工具执行**: 自动调用计算器进行财务指标计算
-    *   🔍 **自我反思**: 检查计算结果是否合理，异常时自动重试
-    *   🔄 **ReAct 循环**: 支持多轮迭代推理（最多5轮）
-*   **💰 财务计算工具**: 支持 19 种财务指标计算：
-    *   盈利能力：增长率、利润率、ROE、EPS、PE
-    *   偿债能力：资产负债率、流动比率、速动比率
-    *   运营能力：资产周转率、存货周转率
-    *   分析工具：股息率、趋势分析、同比分析、行业对比
-    *   统计图表：均值、极值、方差、图表生成
-*   **✍️ 一键生成摘要**: 针对长文档生成结构化的核心财务摘要，快速掌握企业经营状况。
-*   **🐳 Docker一键部署**: 提供完整的 Docker Compose 配置，支持前后端一键启动，解决环境依赖问题。
+- **智能PDF解析**: PyMuPDF + LlamaParse 混合解析，支持无边框表格
+- **RAG问答**: 基于 FAISS + BGE-M3 向量检索，精准回答财务数据问题
+- **AI Agent**: LangGraph ReAct 循环，自动规划、调用工具、反思重试
+- **19种财务指标**: 增长率、利润率、ROE、EPS、PE、资产负债率、流动比率等
+- **一键摘要**: 结构化财报核心摘要
 
 ---
 
-## 🛠️ 技术栈与架构
+## 硬件要求
 
-本项目采用前后端分离的现代Web架构：
+| 要求 | 说明 |
+|------|------|
+| **NVIDIA GPU** | 必须，RAG 向量化需要 CUDA 加速 |
+| **显存 >= 4GB** | BGE-M3 模型约 2GB，加上推理开销 |
+| **磁盘 >= 15GB** | Docker 镜像 + torch CUDA wheel |
 
-*   **前端**: **Streamlit** - 交互式数据分析界面。
-*   **后端**: **FastAPI** - 高性能异步API服务。
-*   **AI核心**:
-    *   **LangGraph**: 构建具备 ReAct 循环的自主推理 Agent。
-    *   **FAISS**: 本地向量数据库，用于知识库检索。
-    *   **LlamaParse**: 专业的文档解析服务。
-    *   **BGE-M3**: 中文语义 Embedding 模型。
-*   **基础设施**:
-    *   **Docker & Docker Compose**: 容器化部署。
-    *   **Poetry**: 依赖管理。
+> 没有 GPU 也可以运行，但 RAG 向量化会极慢（CPU 模式），不推荐。
 
 ---
 
-## 🏗️ 系统架构
+## 第一次使用（Docker 部署）
 
-```mermaid
-flowchart TD
-    A[用户上传PDF财报] --> B{检查本地缓存}
-    B -->|有缓存| C[加载缓存的解析结果]
-    B -->|无缓存| D[启动混合解析引擎]
+### 第 1 步：安装前置软件
 
-    D --> E[PyMuPDF 扫描文档]
-    E --> F[第一次扫描: 表格检测]
+| 软件 | 说明 | 下载 |
+|------|------|------|
+| Docker Desktop | 容器运行环境 | [下载](https://www.docker.com/products/docker-desktop/) |
+| Git | 版本控制（可选） | [下载](https://git-scm.com) |
 
-    F --> G{PyMuPDF 检测到表格?}
-    G -->|是| H[标记为表格页]
-    G -->|否| I{启发式规则检测<br>无边框表格?}
-    I -->|命中| H
-    I -->|未命中| J[标记为普通文本页]
+> 没有 Git？直接在 GitHub 页面点 "Code" → "Download ZIP"，解压即可。
 
-    H --> K[LlamaParse 处理表格页]
-    J --> L[PyMuPDF 提取文本]
+**安装后确保 Docker Desktop 已启动**（任务栏能看到 Docker 图标）。
 
-    K --> M[提取 Markdown 格式表格]
-    L --> N[提取纯文本]
-
-    M --> O[合并所有页面内容]
-    N --> O
-
-    O --> P[写入本地缓存]
-    P --> Q[返回解析结果]
-
-    C --> Q
-
-    Q --> R[构建 RAG 向量库]
-
-    R --> S[MarkdownTextSplitter<br>智能切分文本]
-    S --> T[chunk_size=2000<br>chunk_overlap=200]
-    T --> U[BAAI/bge-m3 模型向量化]
-    U --> V[FAISS 向量数据库存储]
-
-    W[用户提问] --> X[RAG 检索相关上下文]
-    X --> Y[query_rag top_k=5]
-    Y --> Z[DeepSeek Agent 处理问题]
-
-    Z --> AA{需要财务计算?}
-    AA -->|是| AB[调用对应工具计算]
-    AA -->|否| AC[直接生成回答]
-
-    AB --> AD{判断工具类型}
-    AD --> AE[盈利能力工具]
-    AD --> AF[偿债能力工具]
-    AD --> AG[运营能力工具]
-    AD --> AH[股息/趋势/统计工具]
-    AD --> AI[图表生成工具]
-
-    AE --> AJ[增长率 / 利润率 / ROE<br>EPS / PE]
-    AF --> AK[负债率 / 流动比率<br>速动比率]
-    AG --> AL[资产周转率<br>存货周转率]
-    AH --> AM[股息率 / 趋势分析<br>YoY / 行业对比<br>均值/极值/方差]
-    AI --> AN[生成图表数据]
-
-    AJ --> AO[Agent 综合分析]
-    AK --> AO
-    AL --> AO
-    AM --> AO
-    AN --> AO
-
-    AC --> AO
-
-    AO --> AP[返回回答给用户]
-
-    style A fill:#e1f5fe
-    style W fill:#e1f5fe
-    style R fill:#fff3e0
-    style Z fill:#f3e5f5
-    style AE fill:#ffcdd2
-    style AF fill:#ffcdd2
-    style AG fill:#ffcdd2
-    style AH fill:#ffcdd2
-    style AI fill:#ffcdd2
-    style AP fill:#e8f5e9
-```
-
----
-
-## 🔄 Agent 工作流程
-
-当用户提出复杂问题时，Agent 会进行以下推理：
-
-1. **规划 (Planner)**: 分析问题，分解为多个子任务
-   - 例如："计算营收增长率" → [提取2023营收, 提取2022营收, 计算增长率]
-
-2. **执行 (Executor)**: 根据计划调用对应工具
-   - 调用 `tool_calculate_growth_rate(500亿, 400亿)`
-
-3. **反思 (Reflection)**: 检查结果是否合理
-   - 增长率 25%，合理 ✓
-   - 数值异常？重新提取数据
-
-4. **迭代**: 重复执行直到任务完成（最多5轮）
-
-5. **生成回答**: 整合所有结果，生成最终回答
-
----
-
-## 🚀 快速开始 (Docker 推荐)
-
-这是最简单、最推荐的运行方式，无需在本地配置复杂的 Python 环境。
-
-### 0. 克隆项目
+### 第 2 步：获取代码
 
 ```bash
 git clone https://github.com/Jerry518520/financial-analysis-AI-assistant
 cd financial-analysis-AI-assistant
 ```
 
-### 1. 前置准备
-*   安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 并启动。
-*   获取 API Key:
-    *   **DeepSeek API Key**: 用于大模型对话（可在 [DeepSeek](https://platform.deepseek.com/) 申请）。
-    *   **LlamaCloud API Key**: 用于 PDF 解析 (可在 [LlamaCloud](https://cloud.llamaindex.ai/) 免费申请)。
+或下载 ZIP 解压后，用终端进入项目目录。
 
-### 2. 配置环境变量
+### 第 3 步：配置 API Key
 
 复制环境变量模板：
 
 ```bash
+# Windows CMD
+copy env.template .env
+
+# Windows PowerShell / Mac / Linux
 cp env.template .env
 ```
 
-然后编辑 `.env` 文件，填入你的 API Key：
+编辑 `.env` 文件，填入你的 API Key：
 
 ```env
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
-LLAMA_CLOUD_API_KEY=llx-xxxxxxxxxxxxxxxxxxxxxxxx
+DEEPSEEK_API_KEY=sk-你的key
+LLAMA_CLOUD_API_KEY=llx-你的key
 ```
 
-### 3. 一键启动
-在项目根目录打开终端，运行：
+**获取方式**：
+- DeepSeek API Key: https://platform.deepseek.com/
+- LlamaCloud API Key: https://cloud.llamaindex.ai/ （免费）
+
+### 第 4 步：（可选）预下载加速
+
+首次构建需要下载约 850MB 的 PyTorch CUDA 包，Docker 内下载较慢（30-60 分钟）。
+
+**想加速？** 双击运行 `download_wheels.bat`，用浏览器/系统工具多线程下载，快 10 倍。
 
 ```bash
-docker-compose up --build
+# 双击这个文件即可：
+download_wheels.bat
 ```
 
-### 4. 访问应用
-*   **前端界面**: 打开浏览器访问 [http://localhost:8501](http://localhost:8501)
-*   **后端文档**: [http://localhost:8000/docs](http://localhost:8000/docs)
+> 不运行也能构建，只是慢。这个步骤完全可选。
 
-### 5. 停止应用
+### 第 5 步：构建并启动
 
 ```bash
-# 按 Ctrl + C 停止
+docker-compose build
+docker-compose up
+```
 
-# 或者完全清理容器
+首次构建时间参考：
+- **有预下载**: 5-10 分钟
+- **无预下载**: 30-60 分钟（取决于网速）
+- **后续构建**: 2-5 分钟（有缓存）
+
+### 第 6 步：访问应用
+
+- **前端界面**: http://localhost:8501
+- **后端API文档**: http://localhost:8000/docs
+
+### 停止应用
+
+```bash
+# Ctrl + C 停止，然后：
 docker-compose down
 ```
 
 ---
 
-## 🖥️ 前置软件要求
-
-| 软件 | 说明 | 下载地址 |
-|------|------|----------|
-| Docker Desktop | 容器运行环境（必须） | [点击下载](https://www.docker.com/products/docker-desktop) |
-| Git | 版本控制工具（可选，用于克隆项目） | [点击下载](https://git-scm.com) |
-
-> 💡 **没有 Git 怎么办？** 可以直接点击 GitHub 页面上的绿色 "Code" 按钮，选择 "Download ZIP"，解压后进入目录即可。
-
----
-
-## ❓ 常见问题
-
-**Q: 第一次启动很慢怎么办？**
-
-A: 首次运行需要下载 Docker 镜像并安装依赖，大约需要 3-5 分钟。后续启动会很快。
-
-**Q: Windows 用户 `cp` 命令不能用？**
-
-A: 使用 PowerShell：
-```powershell
-copy .env.example .env
-```
-或者直接复制文件并重命名为 `.env`。
-
-**Q: 启动失败怎么办？**
-
-A: 检查以下几点：
-1. Docker Desktop 是否已启动（任务栏图标是否显示）
-2. `.env` 文件是否已创建且 API Key 是否正确
-3. API Key 是否还有额度
-
-**Q: 如何更新到最新版本？**
+## 更新到最新版本
 
 ```bash
 git pull
-docker-compose up --build
+docker-compose build
+docker-compose up
 ```
 
 ---
 
-## 🐍 本地开发运行 (可选)
+## 本地开发（可选）
 
-如果你想进行代码开发，可以使用 Poetry 在本地运行。
+需要 Python 3.11+ 和 NVIDIA GPU。
 
-1.  **安装依赖**:
-    ```bash
-    poetry install
-    ```
-2.  **启动后端**:
-    ```bash
-    poetry run uvicorn financial_report_ai_assistant.api.main:app --reload
-    ```
-3.  **启动前端**:
-    ```bash
-    poetry run streamlit run frontend/main.py
-    ```
+```bash
+# 1. 安装依赖
+poetry install
+
+# 2. 安装 CUDA 版 torch（poetry 默认装的是 CPU 版）
+poetry run poe install-cuda-torch
+
+# 3. 配置 .env（同上）
+
+# 4. 启动后端
+poetry run poe start
+
+# 5. 启动前端（另一个终端）
+poetry run streamlit run frontend/main.py
+```
 
 ---
 
-## 📝 验收清单
+## 项目结构
 
-- [x] 上传 PDF 文件并解析成功
-- [x] 提问"今年的营收是多少"，能准确检索并回答
-- [x] 提问"计算净利润增长率"，能调用计算器工具
-- [x] 点击"生成摘要"，能输出完整的财报分析
-- [x] Agent 能自动规划复杂问题的解决步骤
-- [x] Agent 能进行多轮 ReAct 循环推理
-- [x] Agent 能反思检查计算结果是否合理
-- [x] 支持 19 种财务指标计算工具
+```
+financial-report-ai-assistant/
+├── src/                          # 后端源码
+│   └── financial_report_ai_assistant/
+│       ├── api/                  # FastAPI 路由
+│       ├── core/                 # Agent 核心逻辑
+│       └── services/             # PDF解析、RAG、计算服务
+├── frontend/                     # Streamlit 前端
+├── docker/wheels/                # 预下载的 wheel 文件（git 忽略）
+├── scripts/                      # 工具脚本
+├── Dockerfile                    # 后端镜像
+├── Dockerfile.frontend           # 前端镜像
+├── docker-compose.yml            # 编排配置
+├── download_wheels.bat           # 预下载加速脚本
+├── pyproject.toml                # Poetry 依赖定义
+├── requirements-docker.txt       # Docker 构建依赖
+└── .env                          # API Key（不提交到 git）
+```
+
+---
+
+## 常见问题
+
+**Q: 构建时卡在下载 torch 很久？**
+
+A: 双击运行 `download_wheels.bat` 预下载，再构建。或者耐心等，最终会完成。
+
+**Q: 启动后报 CUDA 不可用？**
+
+A: 确保已安装 NVIDIA 驱动。运行 `nvidia-smi` 检查驱动是否正常。
+
+**Q: 前端连不上后端？**
+
+A: 确保两个容器都在运行。Docker 内前端通过 `http://backend:8000` 访问后端，不需要改配置。
+
+**Q: 如何查看日志？**
+
+A: `docker-compose logs -f` 查看实时日志，`docker-compose logs backend` 只看后端。
+
+---
+
+## 技术栈
+
+| 层 | 技术 |
+|---|------|
+| 前端 | Streamlit |
+| 后端 | FastAPI |
+| AI Agent | LangGraph (ReAct) |
+| 向量数据库 | FAISS |
+| Embedding | BAAI/bge-m3 |
+| PDF解析 | PyMuPDF + LlamaParse |
+| LLM | DeepSeek API |
+| 容器化 | Docker + Docker Compose |
+| 依赖管理 | Poetry |

@@ -7,11 +7,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 安装 Streamlit、requests、markdown（前端所需依赖）
+# 版本与 requirements-docker.txt 保持一致
 # --timeout 设置较长超时时间，避免阿里云镜像源偶发超时
 RUN pip install --no-cache-dir --timeout=120 \
-    streamlit \
-    requests \
-    markdown \
+    streamlit==1.57.0 \
+    requests==2.34.2 \
+    markdown==3.10.2 \
+    pandas==2.3.3 \
     -i https://mirrors.aliyun.com/pypi/simple/ \
     --retries 5
 

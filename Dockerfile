@@ -21,27 +21,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ====== 第一层：PyTorch CUDA（独立缓存层，版本变更时才重建）======
-# 阿里云镜像直装 CUDA wheel，不走 PyPI
-# --no-deps: typing-extensions 等由后续 pip install 统一处理
+# 优先从本地 docker/wheels/ 安装（需先运行 scripts/download_docker_wheels.py）
+# 若本地无 wheel 则从阿里云镜像下载
+COPY docker/wheels/ /tmp/wheels/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --no-deps \
-    https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl
+    pip install --no-deps /tmp/wheels/torch-2.10.0+cu126-cp311-cp311-manylinux_2_28_x86_64.whl \
+    || pip install --no-deps https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl
 
 # ====== 第二层：其余 Python 依赖（requirements-docker.txt 不含 torch）======
 # poetry export --without-hashes --only main 生成，排除 dev 依赖
+# --timeout 120: 阿里云镜像偶发超时，给足等待时间
 COPY requirements-docker.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements-docker.txt
+    pip install --timeout 120 --retries 5 -r requirements-docker.txt
 
 # ====== 第三层：项目代码（变更最频繁，放最后）======
 COPY src/ ./src/
-COPY frontend/ ./frontend/
 
 # 创建必要的缓存目录
 RUN mkdir -p cache_data faiss_index
 
-# 暴露端口 (8000: API, 8501: Streamlit)
-EXPOSE 8000 8501
+# 暴露端口 (8000: API)
+EXPOSE 8000
 
 # 默认启动命令（可以在 docker-compose 中覆盖）
 CMD ["uvicorn", "financial_report_ai_assistant.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

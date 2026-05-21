@@ -34,12 +34,14 @@ dependencies = [
 packages = [{include = "financial_report_ai_assistant", from = "src"}]
 
 # PyTorch CUDA 源（阿里云镜像）
-# ⚠️ 重要：标准 PyPI 上的 torch 是 CPU 版，RAG 向量化必须用 GPU
-# Poetry 不原生支持 --find-links 源，Docker 构建已改用：
-#   1. poetry export --without-hashes --only main → requirements-docker.txt
-#   2. 从 requirements-docker.txt 中删除 torch 行
-#   3. Dockerfile 里 pip 单独装 CUDA wheel + pip install -r requirements-docker.txt
-# 本地开发时：poetry run pip install "torch==2.10.0+cu126" -f https://mirrors.aliyun.com/pytorch-wheels/cu126/
+# ⚠️ 重要：poetry.lock 中的 torch 是 CPU 版 (2.10.0)，RAG 向量化必须用 GPU
+# Poetry 不支持 local version identifier (+cu126)，所以 CUDA torch 需要单独安装。
+#
+# 本地开发：poetry install 后执行以下命令安装 CUDA 版 torch：
+#   poetry run poe install-cuda-torch
+#   或手动：poetry run pip install "torch==2.10.0+cu126" -f https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-deps
+#
+# Docker 构建：Dockerfile 中已单独安装 CUDA wheel，不受此问题影响。
 [[tool.poetry.source]]
 name = "pytorch-cu126"
 url = "https://mirrors.aliyun.com/pytorch-wheels/cu126/"
@@ -72,3 +74,6 @@ asyncio_mode = "auto"
 start = { cmd = "uvicorn financial_report_ai_assistant.api.main:app --reload --app-dir src", help = "Starts the FastAPI development server." }
 test = { cmd = "pytest tests/ -v --tb=short", help = "Run all tests." }
 test-cov = { cmd = "pytest tests/ -v --cov=financial_report_ai_assistant --cov-report=term-missing", help = "Run tests with coverage report." }
+install-cuda-torch = { cmd = "python scripts/install_cuda_torch.py", help = "Patch CPU torch with CUDA version after poetry install." }
+export-docker-reqs = { cmd = "python scripts/export_docker_requirements.py", help = "Regenerate requirements-docker.txt excluding nvidia-* packages that conflict with cu126 torch." }
+download-wheels = { cmd = "python scripts/download_docker_wheels.py", help = "Pre-download large wheels (torch CUDA) for faster Docker builds. Or double-click download_wheels.bat." }

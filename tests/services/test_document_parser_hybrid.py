@@ -68,14 +68,14 @@ class TestHybridParser(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         full_text = result["full_text"]
         
-        # Check Page 1 used LlamaParse (should contain "Table Enhanced")
-        self.assertIn("Table Enhanced", full_text)
+        # Check Page 1 used LlamaParse (should contain "LlamaParse Enhanced")
+        self.assertIn("LlamaParse Enhanced", full_text)
         self.assertIn("LlamaParse Table Content", full_text)
-        
-        # Check Page 2 used direct text (should NOT contain "Table Enhanced")
+
+        # Check Page 2 used direct text (should NOT contain "LlamaParse Enhanced")
         self.assertIn("Page 2", full_text)
         self.assertIn("Page 2 Text", full_text)
-        self.assertNotIn("Page 2 (Table Enhanced)", full_text)
+        self.assertNotIn("Page 2 (LlamaParse Enhanced)", full_text)
         
         # Check that LlamaParse was called
         mock_llama_parse.assert_called()

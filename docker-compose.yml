@@ -26,10 +26,11 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    restart: unless-stopped
     command: uvicorn financial_report_ai_assistant.api.main:app --host 0.0.0.0 --port 8000
     # 健康检查：frontend 会等 backend healthy 后才启动
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -52,6 +53,7 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
     command: streamlit run frontend/main.py --server.address 0.0.0.0 --server.port 8501
     networks:
       - app-network

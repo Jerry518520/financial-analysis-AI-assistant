@@ -19,7 +19,7 @@ import traceback
 PASS = 0
 FAIL = 0
 
-def test(name, fn):
+def run_test(name, fn):
     global PASS, FAIL
     print(f"\n{'='*60}")
     print(f"TEST: {name}")
@@ -172,19 +172,19 @@ if __name__ == "__main__":
     print("Agent 全链路集成测试")
     print("=" * 60)
 
-    test("LLM 基础连接", test_llm_connection)
-    test("Function Calling 基础", test_function_calling_basic)
-    test("工具实际执行", test_tool_execution)
-    test("Agent 简单查询", test_agent_simple)
-    test("Agent 财务计算", test_agent_with_calculation)
-    test("Agent 数据缺失", test_agent_no_data)
-    test("Agent 多工具调用", test_agent_multi_tool)
-    test("简单问题分类", test_simple_query_classification)
-    test("推荐问题生成", test_recommendations)
-    test("LangGraph 工作流", test_graph_build)
-    test("长上下文边界", test_long_context)
-    test("空上下文边界", test_empty_context)
-    test("迭代控制边界", test_max_iterations)
+    run_test("LLM 基础连接", test_llm_connection)
+    run_test("Function Calling 基础", test_function_calling_basic)
+    run_test("工具实际执行", test_tool_execution)
+    run_test("Agent 简单查询", test_agent_simple)
+    run_test("Agent 财务计算", test_agent_with_calculation)
+    run_test("Agent 数据缺失", test_agent_no_data)
+    run_test("Agent 多工具调用", test_agent_multi_tool)
+    run_test("简单问题分类", test_simple_query_classification)
+    run_test("推荐问题生成", test_recommendations)
+    run_test("LangGraph 工作流", test_graph_build)
+    run_test("长上下文边界", test_long_context)
+    run_test("空上下文边界", test_empty_context)
+    run_test("迭代控制边界", test_max_iterations)
 
     print(f"\n{'='*60}")
     print(f"结果: {PASS} passed, {FAIL} failed")
