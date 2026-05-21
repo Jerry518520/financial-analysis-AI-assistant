@@ -121,11 +121,14 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
 @app.post("/chat")
 async def chat_with_report(request: ChatRequest):
     try:
-        # RAG 检索（当前问题）
-        rag_result = await asyncio.to_thread(query_rag_with_source, request.question)
+        # RAG 检索（当前问题，使用较低阈值提高中文财务术语召回率）
+        rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 5, 0.3)
         relevant_context = rag_result["context"]
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
+
+        # 只保留 top-2 来源页面（按相似度排序），避免引用过多无关页面
+        source_pages = source_pages[:2]
 
         print(f"🔍 用户问: {request.question}")
         print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")

@@ -480,12 +480,14 @@ def _render_source_images(source_pages, btn_key):
             st.rerun()
         for page in source_pages:
             try:
-                st.image(
-                    f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800",
-                    caption=f"📄 来源：第 {page} 页"
-                )
-            except Exception:
-                st.caption(f"⚠️ 第 {page} 页溯源图片加载失败")
+                # 服务端获取图片字节（避免 Docker 内部 URL 对浏览器不可达）
+                resp = requests.get(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", timeout=10)
+                if resp.status_code == 200:
+                    st.image(resp.content, caption=f"📄 来源：第 {page} 页")
+                else:
+                    st.caption(f"⚠️ 第 {page} 页溯源图片加载失败 (HTTP {resp.status_code})")
+            except Exception as e:
+                st.caption(f"⚠️ 第 {page} 页溯源图片加载失败: {e}")
     else:
         # 未展开：显示"查看来源"按钮
         if st.button(label, key=btn_key):
