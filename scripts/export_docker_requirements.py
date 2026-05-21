@@ -57,6 +57,9 @@ def main():
             excluded_count += 1
             pkg = line.strip().split("==")[0]
             print(f"  ❌ 排除: {pkg}")
+        elif line.strip().startswith("--index-url"):
+            # 跳过 index-url，由 Dockerfile 的 PIP_INDEX_URL 控制
+            print(f"  ⏭️  跳过: --index-url (由 Dockerfile 控制)")
         else:
             filtered.append(line)
 
@@ -67,7 +70,7 @@ def main():
         "#",
         "# nvidia-*, triton, cuda-bindings, cuda-pathfinder are excluded because",
         "# Docker builds use cu126 torch wheel which bundles its own CUDA 12.6 libs.",
-        "# Installing these packages would cause CUDA 12.6 vs 12.8 version conflicts.",
+        "# index-url is controlled by Dockerfile's PIP_INDEX_URL, not hardcoded here.",
         "",
     ]
 

@@ -6,7 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app/src" \
     HF_ENDPOINT=https://hf-mirror.com \
-    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_DEFAULT_TIMEOUT=600 \
+    PIP_RETRIES=10
 
 # 设置工作目录
 WORKDIR /app
@@ -30,10 +32,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # ====== 第二层：其余 Python 依赖（requirements-docker.txt 不含 torch）======
 # poetry export --without-hashes --only main 生成，排除 dev 依赖
-# --timeout 120: 阿里云镜像偶发超时，给足等待时间
+# 阿里云镜像偶发超时，加大超时和重试；失败时回退到清华源
 COPY requirements-docker.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --timeout 120 --retries 5 -r requirements-docker.txt
+    pip install --timeout 600 --retries 10 -r requirements-docker.txt \
+    || pip install --timeout 600 --retries 10 -r requirements-docker.txt \
+       -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # ====== 第三层：项目代码（变更最频繁，放最后）======
 COPY src/ ./src/

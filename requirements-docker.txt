@@ -2,7 +2,7 @@
 # nvidia-*, triton, cuda-bindings, cuda-pathfinder are EXCLUDED because
 # Docker builds use cu126 torch wheel which bundles its own CUDA 12.6 libs.
 # To regenerate: poetry run poe export-docker-reqs
---index-url https://mirrors.aliyun.com/pypi/simple
+# index-url 由 Dockerfile 的 PIP_INDEX_URL 控制，不在这里硬编码
 
 aiohappyeyeballs==2.6.1 ; python_version >= "3.11" and python_version < "3.15"
 aiohttp==3.13.5 ; python_version >= "3.11" and python_version < "3.15"
