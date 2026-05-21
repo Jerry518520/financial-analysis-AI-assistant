@@ -23,21 +23,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ====== 第一层：PyTorch CUDA（独立缓存层，版本变更时才重建）======
-# 优先从本地 docker/wheels/ 安装（需先运行 scripts/download_docker_wheels.py）
-# 若本地无 wheel 则从阿里云镜像下载
+# 优先从本地 docker/wheels/ 安装（需先运行 download_wheels.bat）
+# 若本地无 wheel 则从镜像下载，失败时清缓存换源重试
 COPY docker/wheels/ /tmp/wheels/
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps /tmp/wheels/torch-2.10.0+cu126-cp311-cp311-manylinux_2_28_x86_64.whl \
-    || pip install --no-deps https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl
+    || pip install --no-deps https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl \
+    || (rm -rf /root/.cache/pip/http /root/.cache/pip/wheels \
+        && pip install --no-deps https://download.pytorch.org/whl/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl)
 
 # ====== 第二层：其余 Python 依赖（requirements-docker.txt 不含 torch）======
 # poetry export --without-hashes --only main 生成，排除 dev 依赖
-# 阿里云镜像偶发超时，加大超时和重试；失败时回退到清华源
+# 阿里云镜像偶发超时，加大超时和重试；失败时清缓存回退到清华源
 COPY requirements-docker.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --timeout 600 --retries 10 -r requirements-docker.txt \
-    || pip install --timeout 600 --retries 10 -r requirements-docker.txt \
-       -i https://pypi.tuna.tsinghua.edu.cn/simple/
+    || (rm -rf /root/.cache/pip/http /root/.cache/pip/wheels \
+        && pip install --timeout 600 --retries 10 -r requirements-docker.txt \
+           -i https://pypi.tuna.tsinghua.edu.cn/simple/)
 
 # ====== 第三层：项目代码（变更最频繁，放最后）======
 COPY src/ ./src/
