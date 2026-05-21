@@ -218,6 +218,47 @@ class AgentState(TypedDict):
 
 _TOOL_MAP: dict = {}  # 工具名 → 工具函数
 
+def _validate_tool_args(tool_name: str, tool_args: dict) -> dict:
+    """校验工具参数：确保数值参数是有效的 float，列表参数是有效的 list[float]。
+    无效参数会被跳过（不传给工具），让工具自身的除零保护处理缺失参数。"""
+    validated = {}
+    for key, value in tool_args.items():
+        if value is None:
+            continue
+        if isinstance(value, (int, float)):
+            validated[key] = float(value)
+        elif isinstance(value, str):
+            # 尝试从字符串中提取数字（LLM 可能传 "100万" 或 "15.5%"）
+            import re
+            num_match = re.search(r'-?[\d,]+\.?\d*', value.replace(',', ''))
+            if num_match:
+                try:
+                    validated[key] = float(num_match.group().replace(',', ''))
+                except ValueError:
+                    print(f"⚠️ 参数 {key} 无法转换为数字: {value}")
+            else:
+                print(f"⚠️ 参数 {key} 不是有效数字: {value}")
+        elif isinstance(value, list):
+            # 列表参数：过滤非数字元素
+            nums = []
+            for item in value:
+                if isinstance(item, (int, float)):
+                    nums.append(float(item))
+                elif isinstance(item, str):
+                    import re
+                    m = re.search(r'-?[\d,]+\.?\d*', item.replace(',', ''))
+                    if m:
+                        try:
+                            nums.append(float(m.group().replace(',', '')))
+                        except ValueError:
+                            pass
+            if nums:
+                validated[key] = nums
+        else:
+            print(f"⚠️ 参数 {key} 类型不支持: {type(value)}")
+    return validated
+
+
 def _get_tool_map():
     """懒加载工具映射表"""
     global _TOOL_MAP
@@ -262,6 +303,8 @@ def agent_node(state: AgentState):
 - 如果找不到某个参数的数据，直接用自然语言回答，不要调用工具
 - 每次最多调用 2 个工具
 - 【关键】优先使用历史对话中已计算的数据，避免重复计算
+- 【数据校验】所有数值必须来自背景信息原文，禁止编造或推测任何数字
+- 【来源标注】回答中引用的每个数据必须标注来源页码，格式为"根据第X页数据，XXX为YYY"
 
 【背景信息】（包含当前文档和历史对话数据）：
 {state['context']}
@@ -294,17 +337,25 @@ def agent_node(state: AgentState):
             tool_args = tc["args"]
 
             tool_map = _get_tool_map()
-            if tool_name in tool_map:
-                try:
-                    result = tool_map[tool_name].invoke(tool_args)
-                    new_results.append(f"[工具调用] {tool_name}({tool_args}) → {result}")
-                    print(f"🔧 工具调用成功: {tool_name}({tool_args}) → {result}")
-                except Exception as e:
-                    new_results.append(f"[工具调用失败] {tool_name}: {str(e)}")
-                    print(f"❌ 工具调用失败: {tool_name}: {e}")
-            else:
+            if tool_name not in tool_map:
                 new_results.append(f"[未知工具] {tool_name}")
                 print(f"⚠️ 未知工具: {tool_name}")
+                continue
+
+            # 校验参数：确保数值类型正确，防止 LLM 传入字符串/null
+            validated_args = _validate_tool_args(tool_name, tool_args)
+            if not validated_args:
+                new_results.append(f"[工具调用跳过] {tool_name}: 参数校验失败，无有效数值参数")
+                print(f"⚠️ 工具参数校验失败: {tool_name}({tool_args})")
+                continue
+
+            try:
+                result = tool_map[tool_name].invoke(validated_args)
+                new_results.append(f"[工具调用] {tool_name}({tool_args}) → {result}")
+                print(f"🔧 工具调用成功: {tool_name}({tool_args}) → {result}")
+            except Exception as e:
+                new_results.append(f"[工具调用失败] {tool_name}: {str(e)}")
+                print(f"❌ 工具调用失败: {tool_name}: {e}")
 
         return {
             "tool_results": new_results,
@@ -370,11 +421,12 @@ def answer_node(state: AgentState):
 请生成一个完整、专业的回答。回答要求：
 1. 直接回答用户的问题，不要有任何开场白、问候语或自我介绍
 2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头，第一句话就是实质性内容
-3. 包含具体的数值和计算结果
+3. 包含具体的数值和计算结果，每个数据必须来自【背景信息】或【工具执行结果】，禁止编造任何数字
 4. 如有需要，给出分析和建议
 5. 使用 Markdown 格式
-6. 即使背景信息中没有直接相关的数据，也要基于已有信息给出尽可能有用的分析，说明哪些数据缺失，而不是简单地说"未找到"
-7. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模，而不是直接写"一、债务结构与规模"
+6. 【关键】如果背景信息和工具结果中没有足够的数据回答问题，必须明确说明"财报中未找到相关数据"，禁止推测或编造
+7. 所有引用的数值必须标注来源页码，格式为"根据第X页数据，XXX为YYY"
+8. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模，而不是直接写"一、债务结构与规模"
 """
 
     response = llm.invoke(answer_prompt)
@@ -508,15 +560,16 @@ def run_lightweight_query(query: str, context: str = "") -> str:
 回答要求：
 1. 直接回答，不要有任何开场白、问候语或自我介绍
 2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头
-3. 如果背景信息中没有相关数据，请如实告知"财报中未找到相关数据"
-4. 包含具体的数值（如有）
-5. 使用 Markdown 格式
-6. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模
+3. 如果背景信息中没有相关数据，请如实告知"财报中未找到相关数据"，禁止编造任何数字
+4. 包含具体的数值（如有），每个数据必须来自背景信息原文，禁止推测
+5. 所有引用的数值必须标注来源页码，格式为"根据第X页数据，XXX为YYY"
+6. 使用 Markdown 格式
+7. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模
 
 【重要提示】：
 - 如果用户问"刚才计算的XXX是多少"，请从历史对话记录中找到对应数值
 - 如果历史回答中已有毛利率、净利率等指标，直接使用该数值回答
-- 表格数据中的数值可以直接引用"""
+- 表格数据中的数值可以直接引用，但必须标注页码"""
 
     response = llm.invoke(prompt)
     return response.content

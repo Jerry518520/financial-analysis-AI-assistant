@@ -37,6 +37,7 @@ class SentenceTransformerEmbeddings(Embeddings):
 vector_store = None
 _vector_store_lock = threading.Lock()  # 保护 vector_store 的并发读写
 PAGE_NUM_MAP: Dict[int, int] = {}
+_current_pdf_hash: str = ""  # 当前向量库对应的 PDF 哈希，用于检测文档切换
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Docker 挂载: ./faiss_index:/app/faiss_index
@@ -177,13 +178,13 @@ def _enhance_table_content(content: str, page_num: int) -> str:
 def build_vector_store(full_text: str, pdf_hash: str = ""):
     """
     构建 RAG 向量库。
-    
+
     pdf_hash: 上传文件的 MD5 哈希。
               - 如果和上次索引的哈希一致，且索引文件存在，则复用旧索引（只重建 PAGE_NUM_MAP）
               - 如果不同，强制删除旧索引并重建
               - 如果不传，每次都强制重建
     """
-    global vector_store, PAGE_NUM_MAP
+    global vector_store, PAGE_NUM_MAP, _current_pdf_hash
     device = get_device()
     print(f"🔥 RAG 服务启动 | 计算设备: {device}")
     print(f"📂 INDEX_PATH: {INDEX_PATH}")
@@ -195,18 +196,30 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                 old_hash = ""
                 if INDEX_HASH_PATH.exists():
                     old_hash = INDEX_HASH_PATH.read_text().strip()
-                
+
                 if pdf_hash == old_hash and os.path.exists(str(INDEX_PATH / "index.faiss")):
                     print(f"♻️ 相同文件 (hash={pdf_hash[:8]}...)，复用已有索引")
                     if _load_vector_store_internal():
                         _rebuild_page_num_map(full_text)
                         print("✅ 使用已有索引，跳过重建")
                         return True
+                    else:
+                        # 加载失败，清空内存中的旧数据，强制重建
+                        print("⚠️ 旧索引加载失败，清空内存并强制重建")
+                        vector_store = None
                 else:
                     # PDF 不同，删除旧索引
                     if old_hash and old_hash != pdf_hash:
                         print(f"🔄 检测到新文件 (旧hash={old_hash[:8]}..., 新hash={pdf_hash[:8]}...)，删除旧索引并重建")
-                        _clear_index()
+                    _clear_index()
+                    # 【关键】立即清空内存中的旧向量库，防止查询到已删除文档的数据
+                    vector_store = None
+                    PAGE_NUM_MAP = {}
+            else:
+                # 无 hash，强制重建（防御性清空）
+                _clear_index()
+                vector_store = None
+                PAGE_NUM_MAP = {}
 
             print("🔄 正在加载 embedding 模型...")
             embeddings = SentenceTransformerEmbeddings(
@@ -224,16 +237,20 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                 return False
 
             print("🧠 正在进行向量化...")
-            vector_store = FAISS.from_documents(documents, embeddings)
+            new_store = FAISS.from_documents(documents, embeddings)
             print("✅ FAISS 向量库创建成功")
 
             INDEX_PATH.mkdir(parents=True, exist_ok=True)
-            vector_store.save_local(str(INDEX_PATH))
-            
+            new_store.save_local(str(INDEX_PATH))
+
+            # 构建成功后才替换全局变量（原子操作，避免中间状态被查询到）
+            vector_store = new_store
+            _current_pdf_hash = pdf_hash
+
             # 保存当前 PDF 哈希，下次上传可比对
             if pdf_hash:
                 INDEX_HASH_PATH.write_text(pdf_hash)
-            
+
             print(f"🎉 索引构建成功并已保存！包含 {vector_store.index.ntotal} 条向量。")
             print(f"📄 页码映射表: {PAGE_NUM_MAP}")
             return True
@@ -242,6 +259,9 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             import traceback
             print(f"❌ RAG 构建失败: {e}")
             print(f"❌ 详细错误: {traceback.format_exc()}")
+            # 构建失败时清空内存，防止旧数据被查询
+            vector_store = None
+            PAGE_NUM_MAP = {}
             return False
 
 def _clear_index():
@@ -250,6 +270,11 @@ def _clear_index():
     if INDEX_PATH.exists():
         shutil.rmtree(INDEX_PATH)
         print("🗑️ 旧索引已删除")
+
+
+def get_current_pdf_hash() -> str:
+    """返回当前向量库对应的 PDF 哈希（用于前端验证文档一致性）"""
+    return _current_pdf_hash
 
 def _rebuild_page_num_map(full_text: str, max_chars_per_chunk: int = 3000):
     """重建页码映射表（必须与 _split_by_page 的分块逻辑完全一致）"""
@@ -297,6 +322,8 @@ def _load_vector_store_internal():
             return True
         except Exception as e:
             print(f"⚠️ 本地索引加载失败: {e}")
+            # 加载失败时清空内存，防止旧数据残留
+            vector_store = None
             return False
     return False
 
@@ -328,12 +355,11 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.2):
     filtered = [(doc, score) for doc, score in docs_and_scores if score >= similarity_threshold]
 
     if not filtered:
-        print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，返回最相似的结果")
-        # 兜底：至少返回 top-1，避免完全无结果
+        print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
         if docs_and_scores:
-            filtered = [docs_and_scores[0]]
-        else:
-            return "未找到与问题相关的内容。"
+            best_score = docs_and_scores[0][1]
+            print(f"📊 最高相似度仅为 {best_score:.4f}，低于阈值 {similarity_threshold}")
+        return "未找到与问题高度相关的内容。请确认问题是否与当前上传的财报相关，或尝试换个问法。"
 
     # 打印每个文档的相似度分数（调试用）
     print(f"📊 相似度分数:")
@@ -373,9 +399,15 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
     filtered = [(doc, score) for doc, score in docs_and_scores if score >= similarity_threshold]
 
     if not filtered:
-        # 兜底：至少返回 top-1
-        filtered = [docs_and_scores[0]]
-        print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，兜底返回 top-1")
+        print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
+        if docs_and_scores:
+            best_score = docs_and_scores[0][1]
+            print(f"📊 最高相似度仅为 {best_score:.4f}，低于阈值 {similarity_threshold}")
+        return {
+            "context": "未找到与问题高度相关的内容。请确认问题是否与当前上传的财报相关，或尝试换个问法。",
+            "page_num": 1,
+            "source_pages": []
+        }
 
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
 

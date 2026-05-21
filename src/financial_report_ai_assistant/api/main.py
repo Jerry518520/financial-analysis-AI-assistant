@@ -17,7 +17,7 @@ from financial_report_ai_assistant.services.document_parser import parse_pdf_byt
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
 from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
-from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
 
@@ -85,7 +85,7 @@ async def upload_financial_report(file: UploadFile = File(...)):
         if "full_text" in result:
             del result["full_text"]
             
-        return {"filename": file.filename, "analysis_result": result}
+        return {"filename": file.filename, "analysis_result": result, "pdf_hash": file_hash}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"解析失败: {str(e)}"})
 
@@ -126,6 +126,15 @@ async def chat_with_report(request: ChatRequest):
         print(f"🔍 用户问: {request.question}")
         print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")
 
+        # RAG 未找到相关内容时，直接返回提示，不浪费 LLM 调用
+        if "未找到" in relevant_context and not request.conversation_history:
+            return {
+                "answer": "财报中未找到与该问题相关的数据。请确认问题是否与当前上传的财报相关，或尝试换个问法。",
+                "source_page": 1,
+                "source_pages": [],
+                "recommendations": ["查看财报核心摘要", "营收是多少", "净利润是多少"]
+            }
+
         # 【关键修复】构建增强上下文：当前 RAG 结果 + 历史对话中提取的数据
         enhanced_context = _build_enhanced_context(
             current_context=relevant_context,
@@ -146,7 +155,13 @@ async def chat_with_report(request: ChatRequest):
         recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
         print(f"💡 推荐问题: {recommendations}")
 
-        return {"answer": answer, "source_page": page_num, "source_pages": source_pages, "recommendations": recommendations}
+        return {
+            "answer": answer,
+            "source_page": page_num,
+            "source_pages": source_pages,
+            "recommendations": recommendations,
+            "pdf_hash": get_current_pdf_hash()
+        }
     except Exception as e:
         import traceback
         traceback.print_exc()

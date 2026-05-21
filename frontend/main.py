@@ -424,6 +424,13 @@ def call_chat_api(prompt, history=None):
         source_pages = data.get("source_pages", [data.get("source_page", None)])
         # 确保列表中的 None 被过滤掉
         source_pages = [p for p in source_pages if p is not None]
+
+        # 文档一致性校验：检测后端索引是否与当前上传的文档一致
+        response_hash = data.get("pdf_hash", "")
+        expected_hash = st.session_state.get("current_pdf_hash", "")
+        if expected_hash and response_hash and response_hash != expected_hash:
+            ai_msg = "⚠️ **文档不一致警告**：后端索引与当前上传的文档不匹配，以下回答可能来自其他文档。\n\n" + ai_msg
+
         if not ai_msg.strip():
             ai_msg = "⚠️ 后端返回了空回答，请检查服务器日志或尝试重新提问。"
         # 优先使用后端返回的推荐问题，如果没有则 fallback 到本地规则
@@ -671,7 +678,9 @@ if 'result' not in st.session_state:
                         progress.progress(70, text="🧠 正在构建 RAG 向量库...")
                         if resp.status_code == 200:
                             progress.progress(100, text="✅ 解析完成！")
-                            st.session_state.result = resp.json()
+                            result_data = resp.json()
+                            st.session_state.result = result_data
+                            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
                             st.session_state.messages = []
                             st.session_state.summary = None
                             if "pending_question" in st.session_state:
@@ -727,7 +736,9 @@ else:
                         progress.progress(70, text="🧠 正在构建 RAG 向量库...")
                         if resp.status_code == 200:
                             progress.progress(100, text="✅ 解析完成！")
-                            st.session_state.result = resp.json()
+                            result_data = resp.json()
+                            st.session_state.result = result_data
+                            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
                             st.session_state.messages = []
                             st.session_state.summary = None
                             if "pending_question" in st.session_state:

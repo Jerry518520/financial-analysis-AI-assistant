@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from financial_report_ai_assistant.services.rag_service import query_rag
+from financial_report_ai_assistant.services.rag_service import query_rag_with_source
 from financial_report_ai_assistant.services.ai_chat import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -54,14 +54,17 @@ async def generate_report_summary(request: AnalysisRequest):
     search_queries = FOCUS_QUERIES.get(request.focus, FOCUS_QUERIES["general"])
     
     contexts = []
+    all_source_pages = set()
     for q in search_queries:
         # 每个 query 找 top 2，避免上下文过长
-        ctx = await asyncio.to_thread(query_rag, q, 2)
-        if ctx and "系统提示：知识库尚未建立" not in ctx:
+        result = await asyncio.to_thread(query_rag_with_source, q, 2)
+        ctx = result.get("context", "")
+        if ctx and "系统提示：知识库尚未建立" not in ctx and "未找到" not in ctx:
             contexts.append(ctx)
-            
+            all_source_pages.update(result.get("source_pages", []))
+
     if not contexts:
-        return {"summary": "无法生成摘要：知识库尚未建立或未检索到有效信息。请先上传并解析财报。"}
+        return {"summary": "无法生成摘要：知识库尚未建立或未检索到有效信息。请先上传并解析财报。", "source_pages": []}
         
     # 拼接上下文，截断到安全范围内
     full_context = "\n---\n".join(contexts)
@@ -94,7 +97,11 @@ async def generate_report_summary(request: AnalysisRequest):
 【分析重点】：{focus_hint}
 
 请使用 Markdown 格式输出，使用小标题（###）分隔不同部分。如果某些信息在片段中未找到，请直接省略该部分，不要编造。
-保持语言专业、客观、精炼。"""
+保持语言专业、客观、精炼。
+
+【数据来源要求】：
+- 每个核心财务指标必须标注来源页码，格式为"（第X页）"
+- 禁止编造任何数字，所有数据必须来自上述检索片段"""
     
     prompt = ChatPromptTemplate.from_template(template)
     chain = prompt | get_llm() | StrOutputParser()
@@ -102,7 +109,7 @@ async def generate_report_summary(request: AnalysisRequest):
     try:
         print("💡 正在生成摘要...")
         summary = await asyncio.to_thread(chain.invoke, {"context": full_context, "focus_hint": focus_hint})
-        return {"summary": summary}
+        return {"summary": summary, "source_pages": sorted(all_source_pages)}
     except Exception as e:
         print(f"❌ 摘要生成失败: {e}")
         return JSONResponse(status_code=500, content={"error": f"生成摘要时发生错误: {str(e)}"})
