@@ -38,11 +38,13 @@ vector_store = None
 _vector_store_lock = threading.Lock()  # 保护 vector_store 的并发读写
 PAGE_NUM_MAP: Dict[int, int] = {}
 _current_pdf_hash: str = ""  # 当前向量库对应的 PDF 哈希，用于检测文档切换
+_pending_pdf_hash: str = ""  # 正在构建索引的 PDF 哈希，防止构建期间查询命中旧索引
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # RAG 查询结果状态常量（供 main.py / analysis.py 使用）
 RAG_NOT_FOUND = "未找到"
 RAG_INDEX_MISSING = "系统提示：知识库尚未建立"
+RAG_INDEX_BUILDING = "系统提示：新文档正在处理中"
 
 # Docker 挂载: ./faiss_index:/app/faiss_index
 # 本地开发: PROJECT_ROOT / "faiss_index"
@@ -140,9 +142,12 @@ def _is_table_content(content: str) -> bool:
     # 检测财务表格关键词
     financial_table_keywords = [
         "合并资产负债表", "合并利润表", "合并现金流量表",
+        "资产负债表", "利润表", "现金流量表",
         "资产总计", "负债总计", "营业收入", "净利润",
         "流动资产", "非流动资产", "流动负债", "非流动负债",
-        "货币资金", "应收账款", "存货", "固定资产"
+        "货币资金", "应收账款", "存货", "固定资产",
+        "每股收益", "每股净资产", "所有者权益", "股东权益",
+        "营业成本", "营业利润", "利润总额",
     ]
     has_financial_keywords = any(kw in content for kw in financial_table_keywords)
     
@@ -158,25 +163,28 @@ def _enhance_table_content(content: str, page_num: int) -> str:
     """增强表格内容的上下文信息，便于检索"""
     # 提取表格中的关键财务指标作为前缀
     indicators = []
-    
-    # 常见的财务指标模式
+
+    # 常见的财务指标模式（覆盖基础数据、盈利能力、偿债能力、运营能力、每股指标）
     patterns = [
         r'(营业收入|营业成本|毛利|净利润|总资产|总负债|净资产|货币资金|应收账款|存货)',
-        r'(流动资产|非流动资产|流动负债|非流动负债|所有者权益)',
-        r'(毛利率|净利率|ROE|ROA|资产负债率|流动比率)'
+        r'(流动资产|非流动资产|流动负债|非流动负债|所有者权益|股东权益)',
+        r'(毛利率|净利率|ROE|ROA|资产负债率|流动比率|速动比率)',
+        r'(每股收益|每股净资产|基本每股收益|稀释每股收益|EPS)',
+        r'(资产周转率|存货周转率|应收账款周转率|总资产周转率)',
+        r'(经营活动|投资活动|筹资活动|现金流量)',
     ]
-    
+
     for pattern in patterns:
         matches = re.findall(pattern, content)
         indicators.extend(matches)
-    
+
     # 去重并限制数量
     unique_indicators = list(dict.fromkeys(indicators))[:10]
-    
+
     if unique_indicators:
         header = f"【第{page_num}页财务数据表，包含：{', '.join(unique_indicators)}】\n"
         return header + content
-    
+
     return content
 
 def _reset_index_state():
@@ -196,7 +204,8 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
               - 如果不同，强制删除旧索引并重建
               - 如果不传，每次都强制重建
     """
-    global vector_store, PAGE_NUM_MAP, _current_pdf_hash
+    global vector_store, PAGE_NUM_MAP, _current_pdf_hash, _pending_pdf_hash
+    _pending_pdf_hash = pdf_hash  # 标记正在构建的 PDF
     device = get_device()
     print(f"🔥 RAG 服务启动 | 计算设备: {device}")
     print(f"📂 INDEX_PATH: {INDEX_PATH}")
@@ -255,6 +264,7 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
 
             print(f"🎉 索引构建成功并已保存！包含 {vector_store.index.ntotal} 条向量。")
             print(f"📄 页码映射表: {PAGE_NUM_MAP}")
+            _pending_pdf_hash = ""
             return True
 
         except Exception as e:
@@ -263,6 +273,7 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             print(f"❌ 详细错误: {traceback.format_exc()}")
             vector_store = None
             PAGE_NUM_MAP = {}
+            _pending_pdf_hash = ""
             return False
 
 def _clear_index():
@@ -351,17 +362,62 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.4):
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
     return "\n\n".join([doc.page_content for doc, _ in filtered])
 
+def _expand_query(question: str) -> List[str]:
+    """扩展查询词，提高中文财务术语的召回率。
+
+    对包含特定财务关键词的问题，生成补充查询以检索同义/相关表格数据。
+    """
+    expansions = []
+    term_map = {
+        "总资产": ["资产总计", "合并资产负债表", "资产合计"],
+        "总负债": ["负债合计", "负债总计", "合并资产负债表"],
+        "净资产": ["所有者权益", "股东权益", "归属母公司股东权益"],
+        "营收": ["营业收入", "营业总收入"],
+        "净利润": ["归属于母公司所有者的净利润", "利润总额"],
+        "毛利率": ["营业收入", "营业成本"],
+        "净利率": ["净利润", "营业收入"],
+        "EPS": ["每股收益", "基本每股收益", "稀释每股收益"],
+        "每股收益": ["基本每股收益", "稀释每股收益", "EPS"],
+        "资产周转率": ["总资产周转率", "营业收入", "总资产"],
+        "存货周转率": ["存货", "营业成本"],
+        "速动比率": ["流动资产", "存货", "流动负债"],
+        "流动比率": ["流动资产", "流动负债"],
+        "资产负债率": ["负债合计", "资产总计"],
+        "ROE": ["净资产收益率", "净利润", "所有者权益"],
+    }
+
+    q = question
+    for keyword, related_terms in term_map.items():
+        if keyword in q:
+            for term in related_terms:
+                expansions.append(term)
+            break  # 只扩展第一个匹配的关键词
+
+    return expansions
+
+
 def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: float = 0.4) -> Dict[str, Any]:
     """
     查询 RAG 并返回上下文 + 来源页码。
-    
+
     返回多个相关文档片段拼接后的上下文（跨页问题可覆盖多个页面），
     以及最佳匹配文档的页码（用于前端溯源高亮）。
-    
+
+    通过多查询扩展（原始问题 + 同义词补充查询）提高召回率。
+
     similarity_threshold: 余弦相似度阈值（0~1），低于此值的文档会被过滤掉。
     """
     global vector_store
     print(f"🔍 query_rag_with_source 被调用 | 问题: {question}")
+
+    # 如果正在构建新索引，返回等待提示而非旧数据
+    if _pending_pdf_hash:
+        print(f"⏳ 索引正在构建中 (pdf_hash={_pending_pdf_hash[:8]}...)，暂不响应查询")
+        return {
+            "context": RAG_INDEX_BUILDING,
+            "page_num": 1,
+            "source_pages": [],
+        }
 
     with _vector_store_lock:
         if vector_store is None:
@@ -370,7 +426,22 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
                 print("❌ 加载失败")
                 return {"context": "系统提示：知识库尚未建立。", "page_num": 1}
         print("✅ vector_store 已就绪，执行相似度搜索...")
+
+        # 主查询
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
+
+        # 多查询扩展：用同义词补充查询，提高召回率
+        expansions = _expand_query(question)
+        if expansions:
+            extra_query = " ".join(expansions[:3])  # 最多 3 个补充词
+            print(f"🔄 查询扩展: {extra_query}")
+            extra_results = vector_store.similarity_search_with_score(extra_query, k=top_k)
+            # 合并结果，去重（按 doc page_content 去重）
+            seen_contents = {doc.page_content for doc, _ in docs_and_scores}
+            for doc, score in extra_results:
+                if doc.page_content not in seen_contents:
+                    docs_and_scores.append((doc, score))
+                    seen_contents.add(doc.page_content)
 
     if not docs_and_scores:
         return {"context": "未找到相关内容。", "page_num": 1}
@@ -388,6 +459,11 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
             "page_num": 1,
             "source_pages": []
         }
+
+    # 按相似度排序（合并后的结果可能无序）
+    filtered.sort(key=lambda x: x[1], reverse=True)
+    # 只取 top_k 个最相关结果
+    filtered = filtered[:top_k]
 
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
 

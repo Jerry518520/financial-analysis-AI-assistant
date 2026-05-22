@@ -191,11 +191,11 @@ def compare_to_industry(value: float, industry_avg: float) -> dict:
     """
     if industry_avg == 0:
         return {"对比结果": "无法计算", "差异": "行业平均值为0"}
-    
+
     ratio = value / industry_avg
     difference = value - industry_avg
     percentage_diff = (value - industry_avg) / abs(industry_avg) * 100
-    
+
     return {
         "公司数值": value,
         "行业平均": industry_avg,
@@ -204,6 +204,65 @@ def compare_to_industry(value: float, industry_avg: float) -> dict:
         "相对差异": f"{percentage_diff:+.2f}%",
         "评价": "高于行业" if ratio > 1 else "低于行业" if ratio < 1 else "与行业持平"
     }
+
+
+# ==================== 行业基准数据库 ====================
+# A 股各行业典型财务指标参考值（基于公开市场数据，仅供参考）
+INDUSTRY_BENCHMARKS = {
+    "制造业": {
+        "毛利率": 0.25, "净利率": 0.08, "ROE": 0.10,
+        "资产负债率": 0.50, "流动比率": 1.50, "速动比率": 1.00,
+        "资产周转率": 0.80, "存货周转率": 4.00,
+    },
+    "科技/互联网": {
+        "毛利率": 0.45, "净利率": 0.15, "ROE": 0.12,
+        "资产负债率": 0.40, "流动比率": 2.00, "速动比率": 1.80,
+        "资产周转率": 0.60, "存货周转率": 10.00,
+    },
+    "金融业": {
+        "毛利率": None, "净利率": 0.30, "ROE": 0.11,
+        "资产负债率": 0.90, "流动比率": None, "速动比率": None,
+        "资产周转率": 0.03, "存货周转率": None,
+    },
+    "零售/消费品": {
+        "毛利率": 0.30, "净利率": 0.05, "ROE": 0.12,
+        "资产负债率": 0.55, "流动比率": 1.30, "速动比率": 0.80,
+        "资产周转率": 1.20, "存货周转率": 6.00,
+    },
+    "能源": {
+        "毛利率": 0.20, "净利率": 0.06, "ROE": 0.09,
+        "资产负债率": 0.55, "流动比率": 1.20, "速动比率": 0.90,
+        "资产周转率": 0.70, "存货周转率": 8.00,
+    },
+    "医药": {
+        "毛利率": 0.55, "净利率": 0.12, "ROE": 0.13,
+        "资产负债率": 0.35, "流动比率": 2.20, "速动比率": 1.80,
+        "资产周转率": 0.50, "存货周转率": 3.50,
+    },
+    "房地产": {
+        "毛利率": 0.22, "净利率": 0.08, "ROE": 0.10,
+        "资产负债率": 0.70, "流动比率": 1.30, "速动比率": 0.50,
+        "资产周转率": 0.25, "存货周转率": 0.50,
+    },
+}
+
+
+def get_industry_benchmark(industry: str, metric: str) -> float | None:
+    """查询行业基准值。返回 None 表示该行业/指标无数据。"""
+    industry_data = INDUSTRY_BENCHMARKS.get(industry)
+    if not industry_data:
+        return None
+    return industry_data.get(metric)
+
+
+def list_industries() -> list:
+    """返回所有可用行业列表"""
+    return list(INDUSTRY_BENCHMARKS.keys())
+
+
+def list_industry_metrics(industry: str) -> dict:
+    """返回某行业的所有基准指标"""
+    return INDUSTRY_BENCHMARKS.get(industry, {})
 
 def generate_chart_data(years: list, values: list, metric_name: str = "指标") -> dict:
     """

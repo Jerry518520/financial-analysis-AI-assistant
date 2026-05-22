@@ -478,3 +478,47 @@ class TestCalculateVariance:
     def test_all_none(self):
         """过滤后不足2个"""
         assert calculate_variance([None, None]) == "数据不足"
+
+
+# ============================================================
+# 21-22. Industry Benchmark Functions
+# ============================================================
+class TestIndustryBenchmarks:
+    def test_get_benchmark_valid(self):
+        from financial_report_ai_assistant.services.financial_calculator import get_industry_benchmark
+        result = get_industry_benchmark("制造业", "毛利率")
+        assert result == 0.25
+
+    def test_get_benchmark_invalid_industry(self):
+        from financial_report_ai_assistant.services.financial_calculator import get_industry_benchmark
+        result = get_industry_benchmark("不存在的行业", "毛利率")
+        assert result is None
+
+    def test_get_benchmark_none_metric(self):
+        from financial_report_ai_assistant.services.financial_calculator import get_industry_benchmark
+        result = get_industry_benchmark("金融业", "毛利率")
+        assert result is None
+
+    def test_list_industries(self):
+        from financial_report_ai_assistant.services.financial_calculator import list_industries
+        industries = list_industries()
+        assert "制造业" in industries
+        assert "医药" in industries
+        assert len(industries) >= 7
+
+    def test_list_industry_metrics(self):
+        from financial_report_ai_assistant.services.financial_calculator import list_industry_metrics
+        metrics = list_industry_metrics("制造业")
+        assert "毛利率" in metrics
+        assert "净利率" in metrics
+        assert "ROE" in metrics
+
+    def test_compare_to_industry_above(self):
+        from financial_report_ai_assistant.services.financial_calculator import compare_to_industry
+        result = compare_to_industry(0.30, 0.25)
+        assert result["评价"] == "高于行业"
+
+    def test_compare_to_industry_below(self):
+        from financial_report_ai_assistant.services.financial_calculator import compare_to_industry
+        result = compare_to_industry(0.20, 0.25)
+        assert result["评价"] == "低于行业"

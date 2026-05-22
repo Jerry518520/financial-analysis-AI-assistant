@@ -28,10 +28,10 @@ def _mock_bind_tools(bind_tools_self):
 # 1. get_tools - 工具列表完整性
 # ============================================================
 class TestGetTools:
-    def test_returns_19_tools(self):
+    def test_returns_all_tools(self):
         from financial_report_ai_assistant.core.agent import get_tools
         tools = get_tools()
-        assert len(tools) == 19
+        assert len(tools) == 21  # 19 原有 + 2 行业基准工具
 
     def test_tool_names(self):
         from financial_report_ai_assistant.core.agent import get_tools
@@ -42,6 +42,8 @@ class TestGetTools:
         assert "tool_calculate_roe" in names
         assert "tool_analyze_trend" in names
         assert "tool_calculate_avg" in names
+        assert "tool_get_industry_benchmark" in names
+        assert "tool_list_industries" in names
 
     def test_tools_are_callable(self):
         from financial_report_ai_assistant.core.agent import get_tools
@@ -395,6 +397,26 @@ class TestSimpleQuery:
         from financial_report_ai_assistant.core.agent import is_simple_query
         long_q = "请问" + "很多字" * 20 + "是多少？"
         assert is_simple_query(long_q) is False
+
+    def test_net_margin_needs_agent(self):
+        """净利率需要计算工具，应走 Agent 路径"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("净利率是多少？") is False
+
+    def test_quick_ratio_needs_agent(self):
+        """速动比率需要计算工具，应走 Agent 路径"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("速动比率是多少？") is False
+
+    def test_turnover_needs_agent(self):
+        """周转率需要计算工具，应走 Agent 路径"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("资产周转率是多少？") is False
+
+    def test_industry_needs_agent(self):
+        """行业对比需要 Agent 工具"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("与行业平均水平对比如何？") is False
 
 
 # ============================================================

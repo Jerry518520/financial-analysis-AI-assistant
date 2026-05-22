@@ -1,4 +1,10 @@
 # 文件: src/financial_report_ai_assistant/api/main.py
+import sys
+import io
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -17,7 +23,7 @@ from financial_report_ai_assistant.services.document_parser import parse_pdf_byt
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
 from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
-from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, RAG_NOT_FOUND
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, RAG_NOT_FOUND, RAG_INDEX_BUILDING
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
 import threading
@@ -66,16 +72,16 @@ async def upload_financial_report(file: UploadFile = File(...)):
             f.write(content)
         with _current_pdf_lock:
             CURRENT_PDF_PATH = pdf_path
-        print(f"📁 PDF 已保存: {pdf_path}")
+        print(f"[PDF] 已保存: {pdf_path}")
 
         # 1. 解析 PDF (获取全量文本)
         result = parse_pdf_bytes(content)
         
         # 2. 构建 RAG 向量库（传入文件哈希，新文件自动重建索引）
         full_text = result.get("full_text", "")
-        print(f"📝 解析结果: 文本长度 = {len(full_text)} 字符")
+        print(f"[PARSE] 解析结果: 文本长度 = {len(full_text)} 字符")
         if full_text:
-            print("🚀 开始构建 RAG 向量库...")
+            print("[RAG] 开始构建 RAG 向量库...")
             # 使用 asyncio.to_thread 避免阻塞事件循环（GPU 计算 + 模型加载耗时较长）
             success = await asyncio.to_thread(build_vector_store, full_text, file_hash)
             if success:
@@ -83,7 +89,7 @@ async def upload_financial_report(file: UploadFile = File(...)):
             else:
                 print(">>> RAG 索引构建失败！")
         else:
-            print("⚠️ 解析结果中没有 full_text 字段")
+            print("[WARN] 解析结果中没有 full_text 字段")
         
         # 为了前端显示清爽，我们把 full_text 从返回结果里去掉 (太大了，没必要传给前端)
         if "full_text" in result:
@@ -127,11 +133,20 @@ async def chat_with_report(request: ChatRequest):
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
 
-        # 只保留 top-2 来源页面（按相似度排序），避免引用过多无关页面
-        source_pages = source_pages[:2]
+        # 保留 top-4 来源页面（按相似度排序），提供足够的页码选择范围
+        source_pages = source_pages[:4]
 
-        print(f"🔍 用户问: {request.question}")
-        print(f"📄 RAG 返回页码: {page_num}，所有来源页: {source_pages}")
+        print(f"[CHAT] 用户问: {request.question}")
+        print(f"[RAG] 返回页码: {page_num}，所有来源页: {source_pages}")
+
+        # 索引正在构建中时，返回提示
+        if RAG_INDEX_BUILDING in relevant_context:
+            return {
+                "answer": "新文档正在处理中，请稍等片刻后重试。",
+                "source_page": 1,
+                "source_pages": [],
+                "recommendations": ["请稍后重试"]
+            }
 
         # RAG 未找到相关内容时，直接返回提示，不浪费 LLM 调用
         if RAG_NOT_FOUND in relevant_context and not request.conversation_history:
@@ -158,15 +173,15 @@ async def chat_with_report(request: ChatRequest):
         # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
         from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
         if is_simple_query(request.question):
-            print(f"⚡ 轻量级查询模式（简单问题快速通道）")
+            print(f"[CHAT] 轻量级查询模式（简单问题快速通道）")
             answer = await asyncio.to_thread(run_lightweight_query, request.question, enhanced_context)
         else:
-            print(f"🤖 Agent 深度分析模式")
+            print(f"[CHAT] Agent 深度分析模式")
             answer = await asyncio.to_thread(run_agent_query, request.question, enhanced_context)
 
         # 生成推荐问题（基于回答动态生成）
         recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
-        print(f"💡 推荐问题: {recommendations}")
+        print(f"[CHAT] 推荐问题: {recommendations}")
 
         return {
             "answer": answer,
@@ -192,7 +207,7 @@ def _build_enhanced_context(current_context: str, history: list, current_questio
     # 文档一致性校验：历史数据可能来自不同文档，跳过注入
     current_hash = get_current_pdf_hash()
     if request_pdf_hash and current_hash and request_pdf_hash != current_hash:
-        print(f"⚠️ 历史数据文档不一致 (请求hash={request_pdf_hash[:8]}..., 当前hash={current_hash[:8]}...)，跳过历史注入")
+        print(f"[WARN] 历史数据文档不一致 (请求hash={request_pdf_hash[:8]}..., 当前hash={current_hash[:8]}...)，跳过历史注入")
         return current_context
 
     # 从历史对话中提取数值数据（问答对）

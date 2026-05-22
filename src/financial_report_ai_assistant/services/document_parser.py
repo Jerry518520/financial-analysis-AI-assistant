@@ -240,6 +240,10 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                 else:
                     # 普通页面：直接提取文本
                     text = page.get_text()
+                    # 检测页面是否包含图片/图表（可能有数据无法提取）
+                    images = page.get_images()
+                    if images and len(text.strip()) < 200:
+                        text += "\n[注：本页包含图片/图表，部分数据可能以图形形式呈现，无法自动提取]"
                     text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
             except Exception as e:
                 print(f"⚠️ Page {i+1} 检测出错: {e}, 降级为普通文本")

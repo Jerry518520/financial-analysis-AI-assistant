@@ -28,7 +28,8 @@ from financial_report_ai_assistant.services.financial_calculator import (
     calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
     calculate_eps, calculate_pe, calculate_turnover, calculate_inventory_turnover,
     calculate_dividend_yield, analyze_trend, analyze_yoy, compare_to_industry,
-    generate_chart_data, calculate_avg, calculate_max, calculate_min, calculate_variance
+    generate_chart_data, calculate_avg, calculate_max, calculate_min, calculate_variance,
+    get_industry_benchmark, list_industries, list_industry_metrics
 )
 
 load_dotenv()
@@ -165,8 +166,25 @@ def tool_calculate_variance(values: list) -> str:
     return str(res)
 
 
+@tool
+def tool_get_industry_benchmark(industry: str, metric: str) -> str:
+    """查询行业基准值。输入行业名称（如"制造业"、"科技/互联网"、"医药"等）和指标名称（如"毛利率"、"净利率"、"ROE"等）。可用行业：制造业、科技/互联网、金融业、零售/消费品、能源、医药、房地产。"""
+    result = get_industry_benchmark(industry, metric)
+    if result is None:
+        available = list_industries()
+        return f"未找到 {industry} 的 {metric} 基准数据。可用行业: {', '.join(available)}"
+    return f"{industry}行业 {metric} 平均水平: {result}"
+
+
+@tool
+def tool_list_industries() -> str:
+    """列出所有可用的行业分类。当用户问行业对比但未指定行业时使用。"""
+    industries = list_industries()
+    return f"可用行业: {', '.join(industries)}"
+
+
 def get_tools():
-    """返回 19 个财务计算工具列表"""
+    """返回财务计算工具列表（含行业基准查询）"""
     return [
         tool_calculate_growth_rate,
         tool_calculate_margin,
@@ -187,6 +205,8 @@ def get_tools():
         tool_calculate_max,
         tool_calculate_min,
         tool_calculate_variance,
+        tool_get_industry_benchmark,
+        tool_list_industries,
     ]
 
 
@@ -292,6 +312,7 @@ def agent_node(state: AgentState):
 1. 分析背景信息中是否包含回答问题所需的数值数据
 2. 如果需要计算，调用相应的财务工具
 3. 如果背景信息中没有相关数据，直接说明"财报中未找到相关数据"，不要调用任何工具
+4. 如果背景信息中包含"[注：本页包含图片/图表]"标记，说明该页部分数据以图形形式呈现无法自动提取，应在回答中说明数据来源受限
 
 ⚠️ 重要规则：
 - 参数必须是具体的数字，禁止传表达式或 null
@@ -299,9 +320,24 @@ def agent_node(state: AgentState):
 - 每次最多调用 2 个工具
 - 【关键】优先使用历史对话中已计算的数据，避免重复计算
 - 【数据校验】所有数值必须来自背景信息原文，禁止编造或推测任何数字
-- 【来源标注】回答中引用的每个数据必须标注来源页码，格式为"根据第X页数据，XXX为YYY"。每个数据点只标注实际包含该数据的那一个页面，不要引用所有检索到的页面
+- 【来源标注】回答中引用的每个数据必须标注来源页码，格式为"根据第X页数据，XXX为YYY"。每个数据点只标注实际包含该数据数值的那一个页面（即数值文字出现的页面），而不是仅提及该指标名称的页面
 - 【数据优先级】当背景信息中同时包含合并报表和母公司报表数据时，必须优先使用合并报表数据进行计算和分析
 - 【直接引用优先】如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产、市盈率等），直接引用该数值，不要尝试用公式计算。只有当背景信息中没有直接给出该指标时，才调用计算工具
+- 【衍生指标计算】以下指标通常需要计算，如果背景信息中未直接给出，应使用工具计算：
+  - 净利率 = 净利润 / 营业收入（使用 tool_calculate_margin）
+  - 资产周转率 = 营业收入 / 总资产（使用 tool_calculate_turnover）
+  - 存货周转率 = 营业成本 / 存货（使用 tool_calculate_inventory_turnover）
+  - EPS = 净利润 / 总股本（使用 tool_calculate_eps），但如果背景信息中已直接给出"基本每股收益"或"稀释每股收益"则直接引用
+  - 速动比率 = (流动资产 - 存货) / 流动负债（使用 tool_calculate_quick_ratio）
+- 【行业对比】当用户问"行业对比"、"行业平均水平"时：
+  1. 先用 tool_list_industries 查看可用行业
+  2. 根据公司所属行业，用 tool_get_industry_benchmark 查询各指标的行业平均值
+  3. 再用 tool_compare_to_industry 将公司数据与行业平均值对比
+  4. 如果无法确定公司所属行业，先问用户或根据业务特征推断
+- 【多期数据年份标注】当财务数据包含多期（如本期/上期、2025年/2024年）时：
+  - 财务报表中左边/前面的列是本期（较新年份），右边/后面的列是上期（较旧年份）
+  - 回答时必须准确标注每个数值对应的年份，如"2025年为XX，2024年为XX"
+  - 禁止将本期数值标注为上期年份，或将上期数值标注为本期年份
 
 【背景信息】（包含当前文档和历史对话数据）：
 {state['context']}
@@ -426,6 +462,7 @@ def answer_node(state: AgentState):
 8. 【数据优先级】当同时存在合并报表和母公司报表数据时，必须优先使用合并报表数据
 9. 【直接引用优先】如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产等），直接引用该数值，不要尝试用公式重新计算
 10. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模，而不是直接写"一、债务结构与规模"
+11. 【多期数据年份标注】当财务数据包含多期时，必须准确标注每个数值对应的年份。财务报表中左边/前面的列是本期（较新年份），右边/后面的列是上期（较旧年份），禁止将两年数据互换
 """
 
     response = llm.invoke(answer_prompt)
@@ -515,8 +552,8 @@ _SIMPLE_QUERY_PATTERNS = [
     r"列出", r"写出来", r"给出",
     r"营收", r"收入", r"利润", r"净利润", r"毛利",
     r"资产", r"负债", r"现金流", r"现金",
-    r"毛利率", r"净利率", r"资产负债率", r"流动比率", r"速动比率",
-    r"周转率", r"股息",
+    r"毛利率", r"资产负债率", r"流动比率",
+    r"股息",
 ]
 
 _NEEDS_AGENT_PATTERNS = [
@@ -526,6 +563,8 @@ _NEEDS_AGENT_PATTERNS = [
     r"同比增长", r"环比", r"增长率",
     r"盈利能力", r"偿债能力", r"运营能力",
     r"每股", r"股本",
+    r"净利率", r"速动比率", r"周转率", r"资产周转率", r"存货周转率",
+    r"行业",
 ]
 
 def is_simple_query(question: str) -> bool:
@@ -570,7 +609,8 @@ def run_lightweight_query(query: str, context: str = "") -> str:
 - 如果历史回答中已有毛利率、净利率等指标，直接使用该数值回答
 - 表格数据中的数值可以直接引用，但必须标注页码
 - 当同时存在合并报表和母公司报表数据时，必须优先使用合并报表数据
-- 如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产等），直接引用，不要尝试用公式计算"""
+- 如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产等），直接引用，不要尝试用公式计算
+- 当数据包含多期时，必须准确标注每个数值对应的年份。报表中左边/前面的列是本期（较新年份），右边/后面的列是上期（较旧年份），禁止将两年数据互换"""
 
     response = llm.invoke(prompt)
     return response.content
