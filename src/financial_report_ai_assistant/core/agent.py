@@ -168,12 +168,12 @@ def tool_calculate_variance(values: list) -> str:
 
 @tool
 def tool_get_industry_benchmark(industry: str, metric: str) -> str:
-    """查询行业基准值。输入行业名称（如"制造业"、"科技/互联网"、"医药"等）和指标名称（如"毛利率"、"净利率"、"ROE"等）。可用行业：制造业、科技/互联网、金融业、零售/消费品、能源、医药、房地产。"""
+    """查询行业基准值。输入行业名称（如"制造业"、"科技/互联网"、"医药"等）和指标名称（如"毛利率"、"净利率"、"ROE"等）。可用行业：制造业、科技/互联网、金融业、零售/消费品、能源、医药、房地产。注意：数据为近似参考值，非权威数据源。"""
     result = get_industry_benchmark(industry, metric)
     if result is None:
         available = list_industries()
         return f"未找到 {industry} 的 {metric} 基准数据。可用行业: {', '.join(available)}"
-    return f"{industry}行业 {metric} 平均水平: {result}"
+    return f"{industry}行业 {metric} 平均水平: {result}（注：此为近似参考值，非权威数据源）"
 
 
 @tool
@@ -334,6 +334,7 @@ def agent_node(state: AgentState):
   2. 根据公司所属行业，用 tool_get_industry_benchmark 查询各指标的行业平均值
   3. 再用 tool_compare_to_industry 将公司数据与行业平均值对比
   4. 如果无法确定公司所属行业，先问用户或根据业务特征推断
+  5. 回答中必须注明"行业数据为近似参考值，非权威数据源，仅供方向性对比"
 - 【多期数据年份标注】当财务数据包含多期（如本期/上期、2025年/2024年）时：
   - 财务报表中左边/前面的列是本期（较新年份），右边/后面的列是上期（较旧年份）
   - 回答时必须准确标注每个数值对应的年份，如"2025年为XX，2024年为XX"

@@ -207,7 +207,8 @@ def compare_to_industry(value: float, industry_avg: float) -> dict:
 
 
 # ==================== 行业基准数据库 ====================
-# A 股各行业典型财务指标参考值（基于公开市场数据，仅供参考）
+# A 股各行业典型财务指标近似参考值（基于公开市场数据的大致范围，非权威数据源）
+# 仅供方向性对比，不构成投资建议。如需精确数据，请接入 Wind/国泰安/东方财富等专业数据源。
 INDUSTRY_BENCHMARKS = {
     "制造业": {
         "毛利率": 0.25, "净利率": 0.08, "ROE": 0.10,
@@ -248,7 +249,8 @@ INDUSTRY_BENCHMARKS = {
 
 
 def get_industry_benchmark(industry: str, metric: str) -> float | None:
-    """查询行业基准值。返回 None 表示该行业/指标无数据。"""
+    """查询行业基准值。返回 None 表示该行业/指标无数据。
+    注意：数据为近似参考值，非权威数据源，仅供方向性对比。"""
     industry_data = INDUSTRY_BENCHMARKS.get(industry)
     if not industry_data:
         return None
