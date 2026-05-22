@@ -549,11 +549,18 @@ class TestValidateToolArgs:
         assert result["profit"] == 300.0
         assert result["revenue"] == 1000.0
 
-    def test_invalid_args_filtered_out(self):
-        """无效参数应被过滤，不传给工具"""
+    def test_non_numeric_string_passed_through(self):
+        """非数值字符串直接透传（如行业名称），由工具自身校验"""
+        from financial_report_ai_assistant.core.agent import _validate_tool_args
+        result = _validate_tool_args("tool_get_industry_benchmark", {"industry": "制造业", "metric": "毛利率"})
+        assert result["industry"] == "制造业"
+        assert result["metric"] == "毛利率"
+
+    def test_invalid_numeric_string_filtered(self):
+        """纯非数值字符串透传，数值参数正常提取"""
         from financial_report_ai_assistant.core.agent import _validate_tool_args
         result = _validate_tool_args("tool_calculate_growth_rate", {"current": "abc", "previous": 1000})
-        assert "current" not in result
+        assert result["current"] == "abc"  # 透传，由工具 Pydantic 模型校验
         assert result["previous"] == 1000.0
 
     def test_none_args_skipped(self):

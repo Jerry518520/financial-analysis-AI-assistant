@@ -222,6 +222,7 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                     if _load_vector_store_internal():
                         _rebuild_page_num_map(full_text)
                         print("✅ 使用已有索引，跳过重建")
+                        _pending_pdf_hash = ""
                         return True
                     else:
                         print("⚠️ 旧索引加载失败，清空内存并强制重建")
@@ -246,6 +247,7 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
 
             if len(documents) == 0:
                 print("❌ 错误：切分后没有 chunks！")
+                _pending_pdf_hash = ""
                 return False
 
             print("🧠 正在进行向量化...")
@@ -277,10 +279,14 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             return False
 
 def _clear_index():
-    """删除旧的索引文件"""
+    """删除旧的索引文件（删除目录内容而非目录本身，兼容 Docker 卷挂载）"""
     import shutil
     if INDEX_PATH.exists():
-        shutil.rmtree(INDEX_PATH)
+        for item in INDEX_PATH.iterdir():
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
         print("🗑️ 旧索引已删除")
 
 

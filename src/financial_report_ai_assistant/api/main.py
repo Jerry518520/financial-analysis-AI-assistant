@@ -2,8 +2,8 @@
 import sys
 import io
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 from dotenv import load_dotenv
 load_dotenv()

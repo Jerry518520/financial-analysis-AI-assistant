@@ -256,7 +256,7 @@ def _safe_float(value) -> float | None:
 
 def _validate_tool_args(tool_name: str, tool_args: dict) -> dict:
     """校验工具参数：确保数值参数是有效的 float，列表参数是有效的 list[float]。
-    无效参数会被跳过（不传给工具），让工具自身的除零保护处理缺失参数。"""
+    字符串参数（如行业名称）直接透传，由工具自身的 Pydantic 模型校验。"""
     validated = {}
     for key, value in tool_args.items():
         if value is None:
@@ -265,12 +265,17 @@ def _validate_tool_args(tool_name: str, tool_args: dict) -> dict:
             nums = [n for item in value if (n := _safe_float(item)) is not None]
             if nums:
                 validated[key] = nums
-        else:
+        elif isinstance(value, str):
             n = _safe_float(value)
             if n is not None:
                 validated[key] = n
             else:
-                print(f"⚠️ 参数 {key} 不是有效数字: {value}")
+                # 非数值字符串（如行业名称），直接透传给工具
+                validated[key] = value
+        else:
+            n = _safe_float(value)
+            if n is not None:
+                validated[key] = n
     return validated
 
 

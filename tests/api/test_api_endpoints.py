@@ -309,10 +309,10 @@ class TestBuildEnhancedContext:
 # 8. POST /chat - RAG 未找到时提前返回
 # ============================================================
 class TestChatRagNotFound:
-    def test_rag_not_found_returns_early(self, client):
+    @patch("financial_report_ai_assistant.api.main.query_rag_with_source")
+    def test_rag_not_found_returns_early(self, mock_rag, client):
         """RAG 未检索到相关内容时应提前返回提示"""
-        from financial_report_ai_assistant.api.main import query_rag_with_source
-        query_rag_with_source.return_value = {
+        mock_rag.return_value = {
             "context": "未找到与问题高度相关的内容。请确认问题是否与当前上传的财报相关，或尝试换个问法。",
             "page_num": 1,
             "source_pages": []
