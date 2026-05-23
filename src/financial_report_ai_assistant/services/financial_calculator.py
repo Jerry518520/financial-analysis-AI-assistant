@@ -22,15 +22,21 @@ def calculate_margin(profit: float, revenue: float) -> Union[float, str]:
     margin = profit / revenue
     return round(margin, 4)
 
-def calculate_roe(net_income: float, equity: float) -> Union[float, str]:
+def calculate_roe(net_income: float, equity: float, beginning_equity: float = None) -> Union[float, str]:
     """
     计算净资产收益率 (ROE)。
-    公式: 净利润 / 净资产
+    优先使用平均净资产口径: 净利润 / ((期初净资产 + 期末净资产) / 2)
+    如果没有期初数据，回退到简化口径: 净利润 / 期末净资产
     """
-    if equity == 0:
-        return "无法计算（净资产为0）"
-    
-    roe = net_income / equity
+    if beginning_equity is not None and beginning_equity > 0:
+        avg_equity = (beginning_equity + equity) / 2
+        if avg_equity == 0:
+            return "无法计算（平均净资产为0）"
+        roe = net_income / avg_equity
+    else:
+        if equity == 0:
+            return "无法计算（净资产为0）"
+        roe = net_income / equity
     return round(roe, 4)
 
 def format_percentage(value: Union[float, str]) -> str:

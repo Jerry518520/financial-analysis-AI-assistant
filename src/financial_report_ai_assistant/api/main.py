@@ -175,6 +175,10 @@ async def chat_with_report(request: ChatRequest):
         if is_simple_query(request.question):
             print(f"[CHAT] 轻量级查询模式（简单问题快速通道）")
             answer = await asyncio.to_thread(run_lightweight_query, request.question, enhanced_context)
+            # 如果轻量级查询未找到数据，回退到 Agent 通道（支持工具计算）
+            if "未找到" in answer:
+                print(f"[CHAT] 轻量级查询未命中，回退到 Agent 模式")
+                answer = await asyncio.to_thread(run_agent_query, request.question, enhanced_context)
         else:
             print(f"[CHAT] Agent 深度分析模式")
             answer = await asyncio.to_thread(run_agent_query, request.question, enhanced_context)

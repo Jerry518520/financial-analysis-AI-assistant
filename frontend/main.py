@@ -676,7 +676,7 @@ if 'result' not in st.session_state:
                     try:
                         files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
                         progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=120)
+                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
                         progress.progress(70, text="🧠 正在构建 RAG 向量库...")
                         if resp.status_code == 200:
                             progress.progress(100, text="✅ 解析完成！")
@@ -734,7 +734,7 @@ else:
                     try:
                         files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
                         progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=120)
+                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
                         progress.progress(70, text="🧠 正在构建 RAG 向量库...")
                         if resp.status_code == 200:
                             progress.progress(100, text="✅ 解析完成！")

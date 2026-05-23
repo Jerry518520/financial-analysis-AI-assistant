@@ -52,9 +52,9 @@ def tool_calculate_margin(profit: float, revenue: float) -> str:
     return format_percentage(res)
 
 @tool
-def tool_calculate_roe(net_income: float, equity: float) -> str:
-    """计算净资产收益率 (ROE)。输入净利润和净资产。"""
-    res = calculate_roe(net_income, equity)
+def tool_calculate_roe(net_income: float, equity: float, beginning_equity: float = None) -> str:
+    """计算净资产收益率 (ROE)。输入净利润和期末净资产；如有期初净资产也请传入，系统会自动使用平均净资产口径。"""
+    res = calculate_roe(net_income, equity, beginning_equity)
     return format_percentage(res)
 
 @tool
@@ -333,6 +333,7 @@ def agent_node(state: AgentState):
   - 资产周转率 = 营业收入 / 总资产（使用 tool_calculate_turnover）
   - 存货周转率 = 营业成本 / 存货（使用 tool_calculate_inventory_turnover）
   - EPS = 净利润 / 总股本（使用 tool_calculate_eps），但如果背景信息中已直接给出"基本每股收益"或"稀释每股收益"则直接引用
+  - ROE = 净利润 / 平均净资产（使用 tool_calculate_roe，同时传入期初净资产以使用平均口径；如无期初数据则回退到简化口径）
   - 速动比率 = (流动资产 - 存货) / 流动负债（使用 tool_calculate_quick_ratio）
 - 【行业对比】当用户问"行业对比"、"行业平均水平"时：
   1. 先用 tool_list_industries 查看可用行业
