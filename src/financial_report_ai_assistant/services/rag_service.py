@@ -366,7 +366,11 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.4):
         print(f"  [{i+1}] 分数={score:.4f} 页码={page} 内容={preview}...")
 
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
-    return "\n\n".join([doc.page_content for doc, _ in filtered])
+    contexts = []
+    for doc, _ in filtered:
+        page = doc.metadata.get("page_num", "?")
+        contexts.append(f"[来源：第{page}页]\n{doc.page_content}")
+    return "\n\n".join(contexts)
 
 def _expand_query(question: str) -> List[str]:
     """扩展查询词，提高中文财务术语的召回率。
@@ -375,29 +379,46 @@ def _expand_query(question: str) -> List[str]:
     """
     expansions = []
     term_map = {
-        "总资产": ["资产总计", "合并资产负债表", "资产合计"],
+        "总资产": ["资产总计", "合并资产负债表", "资产合计", "资产总额"],
         "总负债": ["负债合计", "负债总计", "合并资产负债表"],
         "净资产": ["所有者权益", "股东权益", "归属母公司股东权益"],
-        "营收": ["营业收入", "营业总收入"],
-        "净利润": ["归属于母公司所有者的净利润", "利润总额"],
-        "毛利率": ["营业收入", "营业成本"],
-        "净利率": ["净利润", "营业收入"],
+        "营收": ["营业收入", "营业总收入", "营业净收入"],
+        "净利润": ["归属于母公司所有者的净利润", "利润总额", "归母净利润"],
+        "毛利率": ["营业收入", "营业成本", "综合毛利率"],
+        "净利率": ["净利润", "营业收入", "销售净利率"],
         "EPS": ["每股收益", "基本每股收益", "稀释每股收益"],
         "每股收益": ["基本每股收益", "稀释每股收益", "EPS"],
         "资产周转率": ["总资产周转率", "营业收入", "总资产"],
+        "总资产周转率": ["资产周转率", "营业收入", "总资产"],
         "存货周转率": ["存货", "营业成本"],
         "速动比率": ["流动资产", "存货", "流动负债"],
         "流动比率": ["流动资产", "流动负债"],
-        "资产负债率": ["负债合计", "资产总计"],
+        "资产负债率": ["负债合计", "资产总计", "负债总额"],
         "ROE": ["净资产收益率", "净利润", "所有者权益"],
     }
 
     q = question
+    matched_keywords = []
     for keyword, related_terms in term_map.items():
         if keyword in q:
+            matched_keywords.append(keyword)
             for term in related_terms:
                 expansions.append(term)
-            break  # 只扩展第一个匹配的关键词
+
+    # 如果匹配到多个关键词（如"资产周转率"同时匹配"总资产"和"资产周转率"），合并所有扩展
+    if not matched_keywords:
+        # 无精确匹配时，尝试模糊匹配常见财务术语
+        fuzzy_map = {
+            "周转": ["资产周转率", "存货周转率", "总资产周转率"],
+            "盈利": ["净利润", "毛利率", "净利率", "ROE"],
+            "收益": ["每股收益", "EPS", "净利润"],
+            "偿债": ["资产负债率", "流动比率", "速动比率"],
+        }
+        for keyword, related_terms in fuzzy_map.items():
+            if keyword in q:
+                for term in related_terms:
+                    expansions.append(term)
+                break
 
     return expansions
 
@@ -439,9 +460,9 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         # 多查询扩展：用同义词补充查询，提高召回率
         expansions = _expand_query(question)
         if expansions:
-            extra_query = " ".join(expansions[:3])  # 最多 3 个补充词
+            extra_query = " ".join(expansions[:5])  # 最多 5 个补充词
             print(f"🔄 查询扩展: {extra_query}")
-            extra_results = vector_store.similarity_search_with_score(extra_query, k=top_k)
+            extra_results = vector_store.similarity_search_with_score(extra_query, k=top_k + 3)
             # 合并结果，去重（按 doc page_content 去重）
             seen_contents = {doc.page_content for doc, _ in docs_and_scores}
             for doc, score in extra_results:
@@ -485,7 +506,11 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
     page_num = best_doc.metadata.get("page_num", 1)
 
     # 拼接所有相关文档片段作为上下文（解决跨页问题）
-    contexts = [doc.page_content for doc, _ in filtered]
+    # 每个 chunk 前标注结构化页码，让 LLM 精确知道数据来自哪一页
+    contexts = []
+    for doc, _ in filtered:
+        page = doc.metadata.get("page_num", "?")
+        contexts.append(f"[来源：第{page}页]\n{doc.page_content}")
     context = "\n\n---\n\n".join(contexts)
 
     # 同时记录所有来源页码，按相似度顺序去重（高相关页面排在前面）

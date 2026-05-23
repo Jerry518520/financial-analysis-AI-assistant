@@ -128,7 +128,7 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
 async def chat_with_report(request: ChatRequest):
     try:
         # RAG 检索（当前问题，使用较低阈值提高中文财务术语召回率）
-        rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 5, 0.3)
+        rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 8, 0.3)
         relevant_context = rag_result["context"]
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
@@ -168,7 +168,7 @@ async def chat_with_report(request: ChatRequest):
         # 将有效页码列表注入上下文，约束 LLM 只能引用实际存在的页码
         if source_pages:
             pages_str = "、".join(str(p) for p in source_pages)
-            enhanced_context += f"\n\n【有效来源页码】：第 {pages_str} 页（回答中引用的页码必须来自此列表）"
+            enhanced_context += f"\n\n【有效来源页码】：第 {pages_str} 页（回答中引用的页码必须来自此列表。每个数据片段前已标注[来源：第X页]，请直接使用该页码）"
 
         # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
         from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
