@@ -208,6 +208,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
         total_pages = len(doc)
         
         table_pages_indices = []
+        image_pages_indices = []
         text_pages_content = {} # {page_index: text_content}
 
         print(f"🕵️ 正在扫描 {total_pages} 页文档结构...")
@@ -240,17 +241,20 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                 else:
                     # 普通页面：直接提取文本
                     text = page.get_text()
-                    # 检测页面是否包含图片/图表（可能有数据无法提取）
+                    # 检测页面是否包含图片/图表
                     images = page.get_images()
                     if images and len(text.strip()) < 200:
-                        text += "\n[注：本页包含图片/图表，部分数据可能以图形形式呈现，无法自动提取]"
-                    text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+                        # 图片页面文本很少，标记需要 LlamaParse 处理
+                        image_pages_indices.append(i)
+                        text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+                    else:
+                        text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
             except Exception as e:
                 print(f"⚠️ Page {i+1} 检测出错: {e}, 降级为普通文本")
                 text = page.get_text()
                 text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
 
-        print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，{len(text_pages_content)} 页纯文本。")
+        print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，{len(image_pages_indices)} 页包含图表/图片，{len(text_pages_content)} 页纯文本。")
 
         # 3. 处理表格页面（优先 PyMuPDF，必要时 LlamaParse）
         llama_pages_content = {} # {page_index: markdown_content}
@@ -327,6 +331,51 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                             pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                 
                 # 清理临时文件
+                if os.path.exists(subset_filename):
+                    try:
+                        os.remove(subset_filename)
+                    except OSError:
+                        pass
+
+        # 3b. 处理图片/图表页面（直接送往 LlamaParse，跳过 PyMuPDF）
+        if image_pages_indices:
+            api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+            if not api_key:
+                print(f"⚠️ 缺少 LLAMA_CLOUD_API_KEY，{len(image_pages_indices)} 页图表无法提取")
+                for idx in image_pages_indices:
+                    page = doc[idx]
+                    text = page.get_text()
+                    text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，缺少 API Key 无法自动提取]"
+            else:
+                # 限制图表页面数量，避免消耗过多额度
+                target_image_indices = image_pages_indices[:MAX_LLAMA_PAGES]
+                if len(image_pages_indices) > MAX_LLAMA_PAGES:
+                    print(f"⚠️ 图表页面共 {len(image_pages_indices)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
+
+                subset_filename = f"temp_images_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
+                new_doc = fitz.open()
+                for idx in target_image_indices:
+                    new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+                new_doc.save(subset_filename)
+                new_doc.close()
+
+                print(f"💸 正在调用 LlamaParse 处理 {len(target_image_indices)} 页图表...")
+                detected_lang = _detect_language(doc)
+                try:
+                    parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
+                    documents = parser.load_data(subset_filename)
+                    for idx, result_doc in enumerate(documents):
+                        if idx < len(target_image_indices):
+                            original_page_idx = target_image_indices[idx]
+                            llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse 图表提取) ---\n{result_doc.text}\n"
+                            print(f"✅ Page {original_page_idx+1}: LlamaParse 图表提取成功")
+                except Exception as e:
+                    print(f"⚠️ LlamaParse 图表提取失败: {e}，保留原始文本")
+                    for idx in target_image_indices:
+                        page = doc[idx]
+                        text = page.get_text()
+                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 提取失败]"
+
                 if os.path.exists(subset_filename):
                     try:
                         os.remove(subset_filename)
