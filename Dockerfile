@@ -42,7 +42,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         && pip install --timeout 600 --retries 10 -r requirements-docker.txt \
            -i https://pypi.tuna.tsinghua.edu.cn/simple/)
 
-# ====== 第三层：项目代码（变更最频繁，放最后）======
+# ====== 第三层：预下载 embedding 模型（避免运行时下载超时）======
+# BAAI/bge-m3 约 2GB，构建时缓存到镜像中，运行时直接加载
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
+
+# ====== 第四层：项目代码（变更最频繁，放最后）======
 COPY src/ ./src/
 
 # 创建必要的缓存目录

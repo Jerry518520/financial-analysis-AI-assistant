@@ -24,7 +24,13 @@ class SentenceTransformerEmbeddings(Embeddings):
             except RuntimeError:
                 print("⚠️ CUDA 不可用，回退到 CPU（向量化会很慢）")
                 device = "cpu"
-        self.model = SentenceTransformer(model_name, device=device)
+        # 优先使用本地缓存，避免联网下载超时
+        try:
+            self.model = SentenceTransformer(model_name, device=device, local_files_only=True)
+            print(f"✅ 模型从本地缓存加载: {model_name}")
+        except Exception:
+            print(f"⚠️ 本地缓存未命中，尝试联网下载: {model_name}")
+            self.model = SentenceTransformer(model_name, device=device)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         embeddings = self.model.encode(texts, normalize_embeddings=True)
