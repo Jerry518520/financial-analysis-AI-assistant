@@ -50,6 +50,8 @@ services:
       # backend 也在 Docker 容器中，必须用 Docker 内部网络域名 http://backend:8000
       # 不要用 host.docker.internal（那是访问宿主机用的）
       - API_URL=http://backend:8000
+      # viewer 模式：隐藏开发者菜单，避免 Ctrl+C 触发 "Clear caches" 弹窗
+      - STREAMLIT_CLIENT_TOOLBAR_MODE=viewer
     depends_on:
       backend:
         condition: service_healthy
