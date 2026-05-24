@@ -99,7 +99,7 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
     global PAGE_NUM_MAP
     PAGE_NUM_MAP = {}
 
-    page_pattern = r'--- Page (\d+) ---\n'
+    page_pattern = r'--- Page (\d+)(?:\s*\([^)]*\))?\s*---\n'
     parts = re.split(page_pattern, full_text)
 
     documents = []
@@ -283,6 +283,12 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             PAGE_NUM_MAP = {}
             _pending_pdf_hash = ""
             return False
+
+def clear_pending_state():
+    """清除 _pending_pdf_hash 标记（供外部调用，如 full_text 为空时）"""
+    global _pending_pdf_hash
+    with _vector_store_lock:
+        _pending_pdf_hash = ""
 
 def _clear_index():
     """删除旧的索引文件（删除目录内容而非目录本身，兼容 Docker 卷挂载）"""

@@ -315,7 +315,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     print(f"🌍 检测到文档语言: {detected_lang}，使用对应 LlamaParse 配置")
                     
                     try:
-                        parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
+                        parser = LlamaParse(result_type="markdown", premium_mode=False, language=detected_lang)
                         documents = parser.load_data(subset_filename)
                         
                         # 映射回原始页码

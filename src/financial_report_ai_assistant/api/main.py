@@ -23,7 +23,7 @@ from financial_report_ai_assistant.services.document_parser import parse_pdf_byt
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
 from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
-from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, RAG_NOT_FOUND, RAG_INDEX_BUILDING
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, clear_pending_state, RAG_NOT_FOUND, RAG_INDEX_BUILDING
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
 import threading
@@ -88,13 +88,15 @@ async def upload_financial_report(file: UploadFile = File(...)):
                 print(">>> RAG 索引构建成功！")
             else:
                 print(">>> RAG 索引构建失败！")
+                return JSONResponse(status_code=500, content={"error": "RAG 向量库构建失败，请检查服务端日志"})
         else:
             print("[WARN] 解析结果中没有 full_text 字段")
-        
+            clear_pending_state()
+
         # 为了前端显示清爽，我们把 full_text 从返回结果里去掉 (太大了，没必要传给前端)
         if "full_text" in result:
             del result["full_text"]
-            
+
         return {"filename": file.filename, "analysis_result": result, "pdf_hash": file_hash}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"解析失败: {str(e)}"})
