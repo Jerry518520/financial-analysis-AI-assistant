@@ -135,8 +135,7 @@ async def chat_with_report(request: ChatRequest):
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
 
-        # 保留 top-4 来源页面（按相似度排序），提供足够的页码选择范围
-        source_pages = source_pages[:4]
+        # 保留所有来源页面（LLM 基于全部 chunk 回答，来源页码应覆盖所有检索到的页面）
 
         print(f"[CHAT] 用户问: {request.question}")
         print(f"[RAG] 返回页码: {page_num}，所有来源页: {source_pages}")
