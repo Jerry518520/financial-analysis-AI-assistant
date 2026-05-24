@@ -484,7 +484,6 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
                 if doc.page_content not in seen_contents:
                     docs_and_scores.append((doc, score * EXPANSION_SCORE_DECAY))
                     seen_contents.add(doc.page_content)
-            print(f"🔀 [DEBUG] 合并后共 {len(docs_and_scores)} 个候选 (主查询+扩展衰减{EXPANSION_SCORE_DECAY})")
 
     if not docs_and_scores:
         return {"context": "未找到相关内容。", "page_num": 1}
