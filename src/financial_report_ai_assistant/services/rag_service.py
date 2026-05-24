@@ -531,10 +531,10 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         contexts.append(f"[来源：第{page}页]\n{doc.page_content}")
     context = "\n\n---\n\n".join(contexts)
 
-    # 同时记录所有来源页码，按相似度顺序去重（高相关页面排在前面）
+    # 来源页码：按相似度排序，去重，保留 top-3（最佳匹配优先，避免溯源过多干扰用户）
     source_pages = list(dict.fromkeys(
         doc.metadata.get("page_num", 1) for doc, _ in filtered
-    ))
+    ))[:3]
 
     print(f"📄 最佳匹配页码: {page_num}，所有来源页: {source_pages}")
     return {
