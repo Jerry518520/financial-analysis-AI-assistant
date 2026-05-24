@@ -107,14 +107,21 @@ def calculate_turnover(revenue: float, total_assets: float) -> Union[float, str]
     turnover = revenue / total_assets
     return round(turnover, 2)
 
-def calculate_inventory_turnover(cogs: float, inventory: float) -> Union[float, str]:
+def calculate_inventory_turnover(cogs: float, inventory: float, beginning_inventory: float = None) -> Union[float, str]:
     """
     计算存货周转率。
-    公式: 营业成本 / 存货
+    优先使用平均存货法: 营业成本 / ((期初存货 + 期末存货) / 2)
+    无期初数据时回退到简化口径: 营业成本 / 期末存货
     """
-    if inventory == 0:
-        return "无法计算（存货为0）"
-    turnover = cogs / inventory
+    if beginning_inventory is not None and beginning_inventory > 0:
+        avg_inventory = (beginning_inventory + inventory) / 2
+        if avg_inventory == 0:
+            return "无法计算（平均存货为0）"
+        turnover = cogs / avg_inventory
+    else:
+        if inventory == 0:
+            return "无法计算（存货为0）"
+        turnover = cogs / inventory
     return round(turnover, 2)
 
 def calculate_dividend_yield(dividend_per_share: float, price_per_share: float) -> Union[float, str]:

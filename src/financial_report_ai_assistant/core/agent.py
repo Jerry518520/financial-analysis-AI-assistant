@@ -104,9 +104,9 @@ def tool_calculate_turnover(revenue: float, total_assets: float) -> str:
     return f"{res:.2f} 次"
 
 @tool
-def tool_calculate_inventory_turnover(cogs: float, inventory: float) -> str:
-    """计算存货周转率。输入营业成本和存货金额。"""
-    res = calculate_inventory_turnover(cogs, inventory)
+def tool_calculate_inventory_turnover(cogs: float, inventory: float, beginning_inventory: float = None) -> str:
+    """计算存货周转率。输入营业成本和期末存货金额；如有期初存货也请传入，系统会自动使用平均存货口径。"""
+    res = calculate_inventory_turnover(cogs, inventory, beginning_inventory)
     if isinstance(res, str):
         return res
     return f"{res:.2f} 次"
@@ -331,7 +331,7 @@ def agent_node(state: AgentState):
 - 【衍生指标计算】以下指标通常需要计算，如果背景信息中未直接给出，应使用工具计算：
   - 净利率 = 净利润 / 营业收入（使用 tool_calculate_margin）
   - 资产周转率 = 营业收入 / 总资产（使用 tool_calculate_turnover）
-  - 存货周转率 = 营业成本 / 存货（使用 tool_calculate_inventory_turnover）
+  - 存货周转率 = 营业成本 / 存货（使用 tool_calculate_inventory_turnover，同时传入期初存货以使用平均口径；如无期初数据则回退到简化口径）
   - EPS = 净利润 / 总股本（使用 tool_calculate_eps），但如果背景信息中已直接给出"基本每股收益"或"稀释每股收益"则直接引用
   - ROE = 净利润 / 平均净资产（使用 tool_calculate_roe，同时传入期初净资产以使用平均口径；如无期初数据则回退到简化口径）
   - 速动比率 = (流动资产 - 存货) / 流动负债（使用 tool_calculate_quick_ratio）

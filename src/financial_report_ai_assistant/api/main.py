@@ -166,10 +166,7 @@ async def chat_with_report(request: ChatRequest):
             request_pdf_hash=request.pdf_hash
         )
 
-        # 将有效页码列表注入上下文，约束 LLM 只能引用实际存在的页码
-        if source_pages:
-            pages_str = "、".join(str(p) for p in source_pages)
-            enhanced_context += f"\n\n【有效来源页码】：第 {pages_str} 页（回答中引用的页码必须来自此列表。每个数据片段前已标注[来源：第X页]，请直接使用该页码）"
+        # source_pages 已与 LLM 上下文中的页码完全一致，无需额外约束
 
         # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
         from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
