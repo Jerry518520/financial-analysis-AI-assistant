@@ -360,8 +360,8 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.4):
         print("✅ vector_store 已就绪，执行相似度搜索...")
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 
-    # 按相似度阈值过滤（FAISS inner product = cosine similarity，因为向量已归一化）
-    filtered = [(doc, score) for doc, score in docs_and_scores if score >= similarity_threshold]
+    # 按相似度阈值过滤（FAISS 余弦距离，分数越低越相似）
+    filtered = [(doc, score) for doc, score in docs_and_scores if score <= (2 - similarity_threshold)]
 
     if not filtered:
         print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
@@ -470,23 +470,29 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 
         # 多查询扩展：用同义词补充查询，提高召回率
+        # 【修复】扩展结果施加分数衰减（0.85），防止关键词堆砌查询（如"营业收入 营业总收入"）
+        # 因词频优势压过主查询的精确匹配。主查询结果始终优先于扩展结果。
         expansions = _expand_query(question)
         if expansions:
             extra_query = " ".join(expansions[:5])  # 最多 5 个补充词
             print(f"🔄 查询扩展: {extra_query}")
             extra_results = vector_store.similarity_search_with_score(extra_query, k=top_k + 3)
-            # 合并结果，去重（按 doc page_content 去重）
+            # 合并结果，去重（按 doc page_content 去重），扩展结果分数衰减
+            EXPANSION_SCORE_DECAY = 0.85
             seen_contents = {doc.page_content for doc, _ in docs_and_scores}
             for doc, score in extra_results:
                 if doc.page_content not in seen_contents:
-                    docs_and_scores.append((doc, score))
+                    docs_and_scores.append((doc, score * EXPANSION_SCORE_DECAY))
                     seen_contents.add(doc.page_content)
+            print(f"🔀 [DEBUG] 合并后共 {len(docs_and_scores)} 个候选 (主查询+扩展衰减{EXPANSION_SCORE_DECAY})")
 
     if not docs_and_scores:
         return {"context": "未找到相关内容。", "page_num": 1}
 
-    # 按相似度阈值过滤
-    filtered = [(doc, score) for doc, score in docs_and_scores if score >= similarity_threshold]
+    # 按相似度阈值过滤（FAISS 余弦距离，分数越低越相似）
+    # cosine_similarity_threshold → L2 距离阈值: 2 * (1 - similarity_threshold)
+    max_distance = 2 * (1 - similarity_threshold)
+    filtered = [(doc, score) for doc, score in docs_and_scores if score <= max_distance]
 
     if not filtered:
         print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
@@ -500,7 +506,8 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         }
 
     # 按相似度排序（合并后的结果可能无序）
-    filtered.sort(key=lambda x: x[1], reverse=True)
+    # FAISS 内积 + normalize_embeddings=True → 分数越低越相似（余弦距离）
+    filtered.sort(key=lambda x: x[1], reverse=False)
     # 只取 top_k 个最相关结果
     filtered = filtered[:top_k]
 
