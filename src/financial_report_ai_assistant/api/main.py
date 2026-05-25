@@ -17,6 +17,7 @@ import os
 import hashlib
 import io
 import asyncio
+import re
 
 # 导入所有服务
 from financial_report_ai_assistant.services.document_parser import parse_pdf_bytes
@@ -185,10 +186,14 @@ async def chat_with_report(request: ChatRequest):
         recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
         print(f"[CHAT] 推荐问题: {recommendations}")
 
+        # 合并 RAG 来源页码与 LLM 回答中引用的页码，确保"查看来源"覆盖回答中所有引用的页面
+        cited_pages = _extract_cited_pages(answer)
+        merged_pages = list(dict.fromkeys(source_pages + cited_pages))
+
         return {
             "answer": answer,
             "source_page": page_num,
-            "source_pages": source_pages,
+            "source_pages": merged_pages,
             "recommendations": recommendations,
             "pdf_hash": get_current_pdf_hash()
         }
@@ -230,6 +235,14 @@ def _build_enhanced_context(current_context: str, history: list, current_questio
 3. 所有数值必须来自上述文档内容或历史计算结果，禁止编造"""
 
     return enhanced
+
+
+def _extract_cited_pages(text: str) -> list:
+    """从 LLM 回答中提取引用的页码（如"根据第3页数据"）"""
+    return list(dict.fromkeys(
+        int(m) for m in re.findall(r'第(\d+)页', text)
+    ))
+
 
 @app.get("/highlight")
 async def highlight_page(

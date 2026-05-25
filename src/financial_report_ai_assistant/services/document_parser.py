@@ -2,6 +2,7 @@ import os
 import hashlib
 import fitz  # PyMuPDF
 import re
+import html as html_mod
 from llama_parse import LlamaParse
 from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
@@ -14,6 +15,20 @@ if not os.path.exists(CACHE_DIR):
 
 # 为了防止 LlamaParse 处理过多页面导致超时或消耗过多额度，设置一个软上限
 MAX_LLAMA_PAGES = 20
+
+
+def _get_page_text(page) -> str:
+    """
+    从 PDF 页面提取纯文本。
+    PyMuPDF 的 get_text() 对 Type0 子集字体（中文 PDF 常见）解码为乱码，
+    而 get_text("html") 通过 HTML 实体保留了正确的 Unicode codepoint。
+    """
+    html_content = page.get_text("html")
+    # 提取 HTML 标签之间的文本内容
+    texts = re.findall(r'>([^<]+)<', html_content)
+    # 解码 HTML 实体为 Unicode，拼接为纯文本
+    decoded = [html_mod.unescape(t) for t in texts]
+    return "\n".join(decoded)
 
 # 【策略调整】非必要不使用 LlamaParse
 # 优先级：1. PyMuPDF 提取表格文本  2. LlamaParse（仅当 PyMuPDF 效果差时）
@@ -40,7 +55,7 @@ def _detect_language(doc, sample_pages: int = 5) -> str:
     total_chars = 0
     
     for i in range(min(sample_pages, len(doc))):
-        text = doc[i].get_text()
+        text = _get_page_text(doc[i])
         for ch in text:
             if unicodedata.category(ch).startswith("C"):
                 continue  # 跳过控制字符、空格等
@@ -70,8 +85,8 @@ def _is_suspected_table_page(page) -> bool:
     1. 关键词匹配（财报常见表头）
     2. 数字密度检测（表格页通常包含大量数字）
     """
-    text = page.get_text()
-    
+    text = _get_page_text(page)
+
     # 1. 关键词列表 (中英文)
     table_keywords = [
         "Consolidated Balance Sheet", "Consolidated Income Statement", "Cash Flow",
@@ -104,7 +119,7 @@ def _extract_table_with_pymupdf(page) -> str:
     2. 如果提取不到，尝试按文本块布局分析
     3. 返回 markdown 格式的表格文本
     """
-    text = page.get_text()
+    text = _get_page_text(page)
     
     # 尝试提取结构化表格
     try:
@@ -129,7 +144,12 @@ def _extract_table_with_pymupdf(page) -> str:
                     table_texts.append("\n".join(rows))
             
             if table_texts:
-                return "\n\n".join(table_texts)
+                table_result = "\n\n".join(table_texts)
+                # 检查表格提取是否完整：如果提取的文本远少于页面全文，说明 find_tables 遗漏了内容
+                if len(table_result) > len(text) * 0.4:
+                    return table_result
+                # 表格提取不完整，降级为全文提取
+                print(f"⚠️ find_tables 提取不完整 ({len(table_result)}/{len(text)} 字符)，降级为全文")
     except Exception as e:
         print(f"⚠️ PyMuPDF 表格提取失败: {e}")
     
@@ -240,7 +260,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     table_pages_indices.append(i)
                 else:
                     # 普通页面：直接提取文本
-                    text = page.get_text()
+                    text = _get_page_text(page)
                     # 检测页面是否包含图片/图表
                     images = page.get_images()
                     if images and len(text.strip()) < 200:
@@ -251,7 +271,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                         text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
             except Exception as e:
                 print(f"⚠️ Page {i+1} 检测出错: {e}, 降级为普通文本")
-                text = page.get_text()
+                text = _get_page_text(page)
                 text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
 
         print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，{len(image_pages_indices)} 页包含图表/图片，{len(text_pages_content)} 页纯文本。")
@@ -288,7 +308,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     # 剩余的页面降级为纯文本
                     for idx in pages_need_llama[MAX_LLAMA_PAGES:]:
                         page = doc[idx]
-                        text = page.get_text()
+                        text = _get_page_text(page)
                         pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                 
                 # 构建临时 PDF 子集
@@ -307,7 +327,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     print("⚠️ 缺少 LLAMA_CLOUD_API_KEY，降级为 PyMuPDF 提取")
                     for idx in target_indices:
                         page = doc[idx]
-                        text = page.get_text()
+                        text = _get_page_text(page)
                         pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                 else:
                     # 自动检测文档语言
@@ -327,7 +347,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                         print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
                         for idx in target_indices:
                             page = doc[idx]
-                            text = page.get_text()
+                            text = _get_page_text(page)
                             pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                 
                 # 清理临时文件
@@ -344,7 +364,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                 print(f"⚠️ 缺少 LLAMA_CLOUD_API_KEY，{len(image_pages_indices)} 页图表无法提取")
                 for idx in image_pages_indices:
                     page = doc[idx]
-                    text = page.get_text()
+                    text = _get_page_text(page)
                     text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，缺少 API Key 无法自动提取]"
             else:
                 # 限制图表页面数量，避免消耗过多额度
@@ -373,7 +393,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     print(f"⚠️ LlamaParse 图表提取失败: {e}，保留原始文本")
                     for idx in target_image_indices:
                         page = doc[idx]
-                        text = page.get_text()
+                        text = _get_page_text(page)
                         text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 提取失败]"
 
                 if os.path.exists(subset_filename):
