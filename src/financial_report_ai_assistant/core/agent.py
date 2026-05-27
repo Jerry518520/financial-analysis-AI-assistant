@@ -27,7 +27,7 @@ from financial_report_ai_assistant.services.financial_calculator import (
     calculate_growth_rate, calculate_margin, calculate_roe, format_percentage,
     calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
     calculate_eps, calculate_pe, calculate_turnover, calculate_inventory_turnover,
-    calculate_dividend_yield, analyze_trend, analyze_yoy, compare_to_industry,
+    calculate_receivables_turnover, calculate_dividend_yield, analyze_trend, analyze_yoy, compare_to_industry,
     generate_chart_data, calculate_avg, calculate_max, calculate_min, calculate_variance,
     get_industry_benchmark, list_industries, list_industry_metrics
 )
@@ -96,12 +96,27 @@ def tool_calculate_quick_ratio(current_assets: float, inventory: float, current_
     return f"{res:.2f}"
 
 @tool
-def tool_calculate_turnover(revenue: float, total_assets: float) -> str:
-    """计算资产周转率。输入营业收入和总资产。"""
-    res = calculate_turnover(revenue, total_assets)
+def tool_calculate_turnover(revenue: float, total_assets: float, beginning_total_assets: float = None) -> str:
+    """计算资产周转率。输入营业收入、期末总资产；如有期初总资产也请传入，系统会自动使用平均总资产口径（均为单个数值，不要传入列表）。"""
+    res = calculate_turnover(revenue, total_assets, beginning_total_assets)
     if isinstance(res, str):
         return res
     return f"{res:.2f} 次"
+
+@tool
+def tool_calculate_receivables_turnover(revenue: float, receivables: float, beginning_receivables: float = None) -> str:
+    """计算应收账款周转率。
+    
+    参数说明（必须是单个数值，不要传入列表）：
+    - revenue: 营业收入（本期）
+    - receivables: 期末应收账款余额（本期）
+    - beginning_receivables: 期初应收账款余额（上期），可选。如有传入，系统使用平均应收账款口径；否则回退到简化口径。
+    """
+    res = calculate_receivables_turnover(revenue, receivables, beginning_receivables)
+    if isinstance(res, str):
+        return res
+    return f"{res:.2f} 次"
+
 
 @tool
 def tool_calculate_inventory_turnover(cogs: float, inventory: float, beginning_inventory: float = None) -> str:
@@ -195,6 +210,7 @@ def get_tools():
         tool_calculate_current_ratio,
         tool_calculate_quick_ratio,
         tool_calculate_turnover,
+        tool_calculate_receivables_turnover,
         tool_calculate_inventory_turnover,
         tool_calculate_dividend_yield,
         tool_analyze_trend,
@@ -330,11 +346,13 @@ def agent_node(state: AgentState):
 - 【直接引用优先】如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产、市盈率等），直接引用该数值，不要尝试用公式计算。只有当背景信息中没有直接给出该指标时，才调用计算工具
 - 【衍生指标计算】以下指标通常需要计算，如果背景信息中未直接给出，应使用工具计算：
   - 净利率 = 净利润 / 营业收入（使用 tool_calculate_margin）
-  - 资产周转率 = 营业收入 / 总资产（使用 tool_calculate_turnover）
-  - 存货周转率 = 营业成本 / 存货（使用 tool_calculate_inventory_turnover，同时传入期初存货以使用平均口径；如无期初数据则回退到简化口径）
+  - 资产周转率 = 营业收入 / 平均总资产（使用 tool_calculate_turnover，同时传入期初总资产以使用平均口径；如无期初数据则回退到简化口径）
+  - 存货周转率 = 营业成本 / 平均存货（使用 tool_calculate_inventory_turnover，同时传入期初存货以使用平均口径；如无期初数据则回退到简化口径）
+  - 应收账款周转率 = 营业收入 / 平均应收账款（使用 tool_calculate_receivables_turnover，同时传入期初应收账款以使用平均口径；如无期初数据则回退到简化口径）
   - EPS = 净利润 / 总股本（使用 tool_calculate_eps），但如果背景信息中已直接给出"基本每股收益"或"稀释每股收益"则直接引用
   - ROE = 净利润 / 平均净资产（使用 tool_calculate_roe，同时传入期初净资产以使用平均口径；如无期初数据则回退到简化口径）
   - 速动比率 = (流动资产 - 存货) / 流动负债（使用 tool_calculate_quick_ratio）
+- 【周转率平均值规则】资产周转率、存货周转率、应收账款周转率等所有"周转率"指标，分母一律使用平均值（期初+期末）/2，以确保与分子的"期间流量数据"（如全年营业收入）在口径上匹配。调用工具时尽可能传入期初数据
 - 【行业对比】当用户问"行业对比"、"行业平均水平"时：
   1. 先用 tool_list_industries 查看可用行业
   2. 根据公司所属行业，用 tool_get_industry_benchmark 查询各指标的行业平均值
@@ -350,14 +368,15 @@ def agent_node(state: AgentState):
 【背景信息】（包含当前文档和历史对话数据）：
 {state['context']}
 
-【已完成的工具调用结果】（当前对话内）：
-{_format_tool_results(state.get('tool_results', []))}
+【已完成的计算结果】（当前对话内，仅数值）：
+{_format_tool_results_for_answer(state.get('tool_results', []))}
 
 【数据复用指南】：
-1. 如果用户问"刚才计算的XXX是多少"或"之前的XXX"，从历史对话记录中找到对应数值
-2. 如果历史回答中已经计算过毛利率、净利率等指标，直接使用该数值，不要重新调用工具
+1. 如果用户问"刚才计算的XXX是多少"或"之前的XXX"，直接从已有数据中提取对应数值回答，不要提及"历史对话"、"之前计算过"等过程性描述
+2. 如果已有毛利率、净利率等指标的计算结果，直接引用该数值，不要重新调用工具
 3. 如果当前问题需要前置计算结果（如计算ROE需要先知道净利润和净资产），检查上下文中是否已有这些值
 4. 表格数据中的数值可以直接引用，格式为"根据第X页表格数据，XXX为YYY"
+5. 【绝对禁止】回答中严禁出现"在历史对话中"、"已经调用过...工具"、"tool_xxx"、"之前计算过"等任何描述过程或工具调用的词汇。直接给出数值即可。
 """
 
     # 合并历史消息（不要伪造 tool_calls 消息，历史工具结果已在 system prompt 里）
@@ -418,10 +437,27 @@ def agent_node(state: AgentState):
 
 
 def _format_tool_results(results: list[str]) -> str:
-    """格式化工具结果列表为文本"""
+    """格式化工具结果列表为文本（用于 agent_node 的 system prompt）"""
     if not results:
         return "无"
     return "\n".join(results)
+
+
+def _format_tool_results_for_answer(results: list[str]) -> str:
+    """格式化工具结果为纯数值文本（用于 answer_node），去掉工具名称和调用过程。
+    
+    防止 LLM 在最终回答中复述"已经调用过 tool_xxx 工具"之类的描述。
+    """
+    if not results:
+        return "无"
+    values = []
+    for r in results:
+        # 提取 "→" 后面的结果部分
+        if "→" in r:
+            values.append(r.split("→", 1)[1].strip())
+        else:
+            values.append(r)
+    return "\n".join(values)
 
 
 def should_continue_edge(state: AgentState) -> str:
@@ -456,22 +492,29 @@ def answer_node(state: AgentState):
 【背景信息】：
 {context}
 
-【工具执行结果】：
-{_format_tool_results(tool_results)}
+【计算结果】（仅包含数值，无工具调用描述）：
+{_format_tool_results_for_answer(tool_results)}
 
 请生成一个完整、专业的回答。回答要求：
 1. 直接回答用户的问题，不要有任何开场白、问候语或自我介绍
 2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头，第一句话就是实质性内容
-3. 包含具体的数值和计算结果，每个数据必须来自【背景信息】或【工具执行结果】，禁止编造任何数字
+3. 包含具体的数值和计算结果，每个数据必须来自【背景信息】或【计算结果】，禁止编造任何数字
 4. 如有需要，给出分析和建议
 5. 使用 Markdown 格式
-6. 【关键】如果背景信息和工具结果中没有足够的数据回答问题，必须明确说明"财报中未找到相关数据"，禁止推测或编造
+6. 【关键】如果背景信息和计算结果中没有足够的数据回答问题，必须明确说明"财报中未找到相关数据"，禁止推测或编造
 7. 所有引用的数值必须标注来源页码，格式为"根据第X页数据，XXX为YYY"。每个数据片段前已标注[来源：第X页]，请直接使用该页码
 8. 【数据优先级】当同时存在合并报表和母公司报表数据时，必须优先使用合并报表数据
 9. 【直接引用优先】如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产等），直接引用该数值，不要尝试用公式重新计算
 10. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模，而不是直接写"一、债务结构与规模"
 11. 【多期数据年份标注】当财务数据包含多期时，必须准确标注每个数值对应的年份。财务报表中左边/前面的列是本期（较新年份），右边/后面的列是上期（较旧年份），禁止将两年数据互换
 12. 【数据完整性】当背景信息中存在多个匹配项时（如多年数据、分板块数据、多个期间对比），必须全部列出，不得只挑其中一个回答
+13. 【绝对禁止】回答中严禁出现以下任何表述：
+    - "在历史对话中"
+    - "已经调用过...工具"
+    - "tool_xxx" 等工具名称
+    - "工具调用"、"计算工具"、"使用工具"等描述调用过程的词汇
+    - "之前计算过"等描述历史过程的词汇
+    计算结果应直接作为数据呈现，不要描述获得数据的过程或手段。
 """
 
     response = llm.invoke(answer_prompt)

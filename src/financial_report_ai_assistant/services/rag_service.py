@@ -99,7 +99,8 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
     global PAGE_NUM_MAP
     PAGE_NUM_MAP = {}
 
-    page_pattern = r'--- Page (\d+)(?:\s*\([^)]*\))?\s*---\n'
+    # 【修复】兼容 \r\n 和末尾无换行符的情况
+    page_pattern = r'--- Page (\d+)(?:\s*\([^)]*\))?\s*---\r?\n'
     parts = re.split(page_pattern, full_text)
 
     documents = []
@@ -115,12 +116,23 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
             is_table = _is_table_content(content)
             
             if is_table:
+                # 【修复】先压缩表格中的空单元格，减少 embedding 噪音
+                compressed_content = _compress_markdown_table(content)
                 # 表格内容：不切分，保持完整，并增强上下文
-                enhanced_content = _enhance_table_content(content, page_num)
+                enhanced_content = _enhance_table_content(compressed_content, page_num)
                 doc = Document(page_content=enhanced_content, metadata={"page_num": page_num, "type": "table"})
                 documents.append(doc)
                 PAGE_NUM_MAP[doc_index] = page_num
                 doc_index += 1
+                
+                # 【关键修复】提取关键财务指标行作为独立 chunk，提高检索精度
+                # 整页表格的 embedding 容易被大量数字和空单元格稀释语义，
+                # 独立的关键行 chunk 能让"资产总额"等词获得更高的检索相似度
+                key_rows = _extract_key_table_rows(compressed_content, page_num)
+                for row_text in key_rows:
+                    documents.append(Document(page_content=row_text, metadata={"page_num": page_num, "type": "table_row"}))
+                    PAGE_NUM_MAP[doc_index] = page_num
+                    doc_index += 1
             elif len(content) > max_chars_per_chunk:
                 # 普通长文本：按长度切分
                 sub_chunks = [content[j:j+max_chars_per_chunk] for j in range(0, len(content), max_chars_per_chunk)]
@@ -140,20 +152,126 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
     return documents
 
 
+def _compress_markdown_table(content: str) -> str:
+    """压缩 markdown 表格中的空单元格，减少 embedding 噪音。
+    
+    例如：资产总额 |  |  | 217,739.4 | 207,323.2 |  |  | 5.02% | 200,958.3 |
+    压缩后：资产总额 | 217,739.4 | 207,323.2 | 5.02% | 200,958.3 |
+    """
+    lines = content.split('\n')
+    result = []
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped.startswith('|'):
+            result.append(line)
+            continue
+        cells = [c.strip() for c in line_stripped.split('|')]
+        # 去掉空字符串（由开头/结尾的 | 产生的）和纯空单元格
+        cells = [c for c in cells if c]
+        if cells:
+            result.append('| ' + ' | '.join(cells) + ' |')
+    return '\n'.join(result)
+
+
+# 财务指标行 → 可用于计算的财务指标标签映射
+# 作用：让关键行 chunk 在检索时能被对应的查询词高相似度命中
+_ROW_METRIC_TAGS = {
+    "存货": "存货周转率 速动比率 流动比率",
+    "营业成本": "存货周转率 毛利率",
+    "营业收入": "资产周转率 净利率 毛利率 营收增长率",
+    "营业总收入": "资产周转率 净利率 毛利率 营收增长率",
+    "净利润": "净利率 ROE EPS ROA",
+    "归母净利润": "净利率 ROE EPS",
+    "利润总额": "净利率",
+    "营业利润": "净利率",
+    "毛利": "毛利率",
+    "资产总额": "资产负债率 资产周转率 ROA",
+    "资产总计": "资产负债率 资产周转率 ROA",
+    "总资产": "资产负债率 资产周转率 ROA",
+    "负债总额": "资产负债率",
+    "负债总计": "资产负债率",
+    "总负债": "资产负债率",
+    "净资产": "ROE",
+    "所有者权益": "ROE",
+    "股东权益": "ROE",
+    "流动资产": "流动比率 速动比率",
+    "流动负债": "流动比率 速动比率",
+    "货币资金": "现金流量",
+    "应收账款": "应收账款周转率",
+    "每股收益": "PE",
+    "基本每股收益": "PE",
+    "稀释每股收益": "PE",
+    "EPS": "PE",
+    "每股净资产": "PB",
+}
+
+
+def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
+    """从表格中提取包含关键财务指标的行作为独立 chunk，提高检索精度。
+    
+    每个关键行前面会附加关联计算指标标签，确保用户查询"存货周转率"时，
+    "存货"和"营业成本"的行能被高相似度召回。
+    """
+    key_indicators = [
+        "资产总额", "资产总计", "负债总额", "负债总计",
+        "营业收入", "营业总收入", "营业成本", "毛利", "毛利率",
+        "净利润", "归母净利润", "利润总额", "营业利润",
+        "总资产", "总负债", "净资产", "货币资金",
+        "应收账款", "存货", "固定资产", "流动资产", "非流动资产",
+        "流动负债", "非流动负债", "所有者权益", "股东权益",
+        "每股收益", "基本每股收益", "稀释每股收益", "EPS", "每股净资产",
+        "资产负债率", "流动比率", "速动比率", "ROE", "ROA",
+        "资产周转率", "总资产周转率", "存货周转率", "应收账款周转率",
+    ]
+    rows = []
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line.startswith('|'):
+            continue
+        # 跳过分隔行
+        if re.match(r'^\|[-\s|]+\|$', line):
+            continue
+        cells = [c.strip() for c in line.split('|')]
+        cells = [c for c in cells if c]
+        if not cells:
+            continue
+        first_cell = cells[0]
+        matched_kw = None
+        for kw in key_indicators:
+            if kw in first_cell:
+                matched_kw = kw
+                break
+        if matched_kw:
+            compressed = ' | '.join(cells)
+            # 附加关联计算指标标签，提高检索召回率
+            tags = _ROW_METRIC_TAGS.get(matched_kw, "")
+            if tags:
+                row_text = f"【第{page_num}页财务数据 | 关联指标：{tags}】{compressed}"
+            else:
+                row_text = f"【第{page_num}页财务数据】{compressed}"
+            rows.append(row_text)
+    return rows
+
+
 def _is_table_content(content: str) -> bool:
     """检测内容是否为表格（markdown 表格或财务数据表）"""
     # 检测 markdown 表格标记
     has_table_markers = "|" in content and "---" in content
     
-    # 检测财务表格关键词
+    # 检测财务表格关键词（增加资产总额等同义词）
     financial_table_keywords = [
         "合并资产负债表", "合并利润表", "合并现金流量表",
         "资产负债表", "利润表", "现金流量表",
-        "资产总计", "负债总计", "营业收入", "净利润",
+        "资产总计", "资产总额", "负债总计", "负债总额",
+        "营业收入", "营业总收入", "净利润", "归母净利润",
         "流动资产", "非流动资产", "流动负债", "非流动负债",
         "货币资金", "应收账款", "存货", "固定资产",
         "每股收益", "每股净资产", "所有者权益", "股东权益",
-        "营业成本", "营业利润", "利润总额",
+        "营业成本", "营业利润", "利润总额", "毛利", "毛利率",
+        "总资产", "总负债", "净资产", "资产负债率",
+        "流动比率", "速动比率", "ROE", "ROA",
+        "资产周转率", "存货周转率", "应收账款周转率",
+        "基本每股收益", "稀释每股收益", "EPS",
     ]
     has_financial_keywords = any(kw in content for kw in financial_table_keywords)
     
@@ -171,6 +289,7 @@ def _enhance_table_content(content: str, page_num: int) -> str:
     indicators = []
 
     # 常见的财务指标模式（覆盖基础数据、盈利能力、偿债能力、运营能力、每股指标）
+    # 【修复】增加"资产总额"等同义词，确保前缀描述中包含用户可能查询的词
     patterns = [
         r'(营业收入|营业成本|毛利|净利润|总资产|总负债|净资产|货币资金|应收账款|存货)',
         r'(流动资产|非流动资产|流动负债|非流动负债|所有者权益|股东权益)',
@@ -178,6 +297,7 @@ def _enhance_table_content(content: str, page_num: int) -> str:
         r'(每股收益|每股净资产|基本每股收益|稀释每股收益|EPS)',
         r'(资产周转率|存货周转率|应收账款周转率|总资产周转率)',
         r'(经营活动|投资活动|筹资活动|现金流量)',
+        r'(资产总额|资产总计|负债总额|负债总计|营业总收入|归母净利润)',
     ]
 
     for pattern in patterns:
@@ -224,12 +344,20 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                     old_hash = INDEX_HASH_PATH.read_text().strip()
 
                 if pdf_hash == old_hash and os.path.exists(str(INDEX_PATH / "index.faiss")):
-                    print(f"♻️ 相同文件 (hash={pdf_hash[:8]}...)，复用已有索引")
+                    print(f"♻️ 相同文件 (hash={pdf_hash[:8]}...)，尝试复用已有索引")
                     if _load_vector_store_internal():
-                        _rebuild_page_num_map(full_text)
-                        print("✅ 使用已有索引，跳过重建")
-                        _pending_pdf_hash = ""
-                        return True
+                        # 【修复】校验：复用索引前，检查 full_text 生成的 chunk 数是否与索引向量数一致
+                        temp_docs = _split_by_page(full_text)
+                        expected = len(temp_docs)
+                        actual = vector_store.index.ntotal
+                        if expected == actual:
+                            print(f"✅ 索引一致性校验通过 ({actual} 条向量)，跳过重建")
+                            _pending_pdf_hash = ""
+                            return True
+                        else:
+                            print(f"⚠️ 索引不一致：预期 {expected} 条向量，实际 {actual} 条。强制重建！")
+                            vector_store = None
+                            _reset_index_state()
                     else:
                         print("⚠️ 旧索引加载失败，清空内存并强制重建")
                         vector_store = None
@@ -270,8 +398,15 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             if pdf_hash:
                 INDEX_HASH_PATH.write_text(pdf_hash)
 
-            print(f"🎉 索引构建成功并已保存！包含 {vector_store.index.ntotal} 条向量。")
+            expected_chunks = len(documents)
+            actual_vectors = vector_store.index.ntotal
+            print(f"🎉 索引构建成功并已保存！包含 {actual_vectors} 条向量。")
             print(f"📄 页码映射表: {PAGE_NUM_MAP}")
+            
+            # 【修复】校验：如果向量数和文档数不一致，打印警告
+            if actual_vectors != expected_chunks:
+                print(f"⚠️ 警告：预期索引 {expected_chunks} 条向量，实际只有 {actual_vectors} 条！")
+            
             _pending_pdf_hash = ""
             return True
 
@@ -392,10 +527,13 @@ def _expand_query(question: str) -> List[str]:
     expansions = []
     term_map = {
         "总资产": ["资产总计", "合并资产负债表", "资产合计", "资产总额"],
+        "资产总额": ["资产总计", "合并资产负债表", "资产合计", "总资产"],
         "总负债": ["负债合计", "负债总计", "合并资产负债表"],
+        "负债总额": ["负债合计", "负债总计", "合并资产负债表"],
         "净资产": ["所有者权益", "股东权益", "归属母公司股东权益"],
         "营收": ["营业收入", "营业总收入", "营业净收入"],
         "净利润": ["归属于母公司所有者的净利润", "利润总额", "归母净利润"],
+        "归母净利润": ["归属于母公司所有者的净利润", "净利润", "利润总额"],
         "毛利率": ["营业收入", "营业成本", "综合毛利率"],
         "净利率": ["净利润", "营业收入", "销售净利率"],
         "EPS": ["每股收益", "基本每股收益", "稀释每股收益"],

@@ -97,14 +97,21 @@ def calculate_pe(price_per_share: float, eps: float) -> Union[float, str]:
     pe = price_per_share / eps
     return round(pe, 2)
 
-def calculate_turnover(revenue: float, total_assets: float) -> Union[float, str]:
+def calculate_turnover(revenue: float, total_assets: float, beginning_total_assets: float = None) -> Union[float, str]:
     """
     计算资产周转率。
-    公式: 营收 / 总资产
+    优先使用平均总资产法: 营收 / ((期初总资产 + 期末总资产) / 2)
+    无期初数据时回退到简化口径: 营收 / 期末总资产
     """
-    if total_assets == 0:
-        return "无法计算（总资产为0）"
-    turnover = revenue / total_assets
+    if beginning_total_assets is not None and beginning_total_assets > 0:
+        avg_assets = (beginning_total_assets + total_assets) / 2
+        if avg_assets == 0:
+            return "无法计算（平均总资产为0）"
+        turnover = revenue / avg_assets
+    else:
+        if total_assets == 0:
+            return "无法计算（总资产为0）"
+        turnover = revenue / total_assets
     return round(turnover, 2)
 
 def calculate_inventory_turnover(cogs: float, inventory: float, beginning_inventory: float = None) -> Union[float, str]:
@@ -123,6 +130,24 @@ def calculate_inventory_turnover(cogs: float, inventory: float, beginning_invent
             return "无法计算（存货为0）"
         turnover = cogs / inventory
     return round(turnover, 2)
+
+def calculate_receivables_turnover(revenue: float, receivables: float, beginning_receivables: float = None) -> Union[float, str]:
+    """
+    计算应收账款周转率。
+    优先使用平均应收账款法: 营业收入 / ((期初应收账款 + 期末应收账款) / 2)
+    无期初数据时回退到简化口径: 营业收入 / 期末应收账款
+    """
+    if beginning_receivables is not None and beginning_receivables > 0:
+        avg_receivables = (beginning_receivables + receivables) / 2
+        if avg_receivables == 0:
+            return "无法计算（平均应收账款为0）"
+        turnover = revenue / avg_receivables
+    else:
+        if receivables == 0:
+            return "无法计算（应收账款为0）"
+        turnover = revenue / receivables
+    return round(turnover, 2)
+
 
 def calculate_dividend_yield(dividend_per_share: float, price_per_share: float) -> Union[float, str]:
     """

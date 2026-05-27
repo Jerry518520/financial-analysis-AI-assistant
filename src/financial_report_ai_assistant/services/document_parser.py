@@ -112,70 +112,78 @@ def _is_suspected_table_page(page) -> bool:
 
 def _extract_table_with_pymupdf(page) -> str:
     """
-    使用 PyMuPDF 提取页面中的表格内容，返回格式化的文本
-    
-    策略：
-    1. 先尝试 find_tables() 提取结构化表格
-    2. 如果提取不到，尝试按文本块布局分析
-    3. 返回 markdown 格式的表格文本
+    使用 PyMuPDF 提取页面中的表格内容，返回格式化的文本。
+
+    策略（按优先级）：
+    1. 有边框表格：find_tables(lines, lines)
+    2. 无边框表格：find_tables(text, text) —— 根据文本列对齐检测
+    3. 文本块分析（启发式）
+    4. 兜底：返回原始文本
     """
     text = _get_page_text(page)
-    
-    # 尝试提取结构化表格
+
+    # ---------- 1. 尝试有边框表格 ----------
     try:
         tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
         if tables.tables:
-            table_texts = []
-            for tab in tables.tables:
-                # 提取表格为 markdown 格式
-                rows = []
-                for row in tab.extract():
-                    if row:
-                        # 清理空值，转换为字符串
-                        cleaned = [str(cell).strip() if cell else "" for cell in row]
-                        rows.append("| " + " | ".join(cleaned) + " |")
-                
-                if rows:
-                    # 添加表头分隔行
-                    if len(rows) > 0:
-                        col_count = len(rows[0].split("|")) - 2  # 减去两边的空字符串
-                        separator = "|" + "---|" * col_count
-                        rows.insert(1, separator)
-                    table_texts.append("\n".join(rows))
-            
-            if table_texts:
-                table_result = "\n\n".join(table_texts)
-                # 检查表格提取是否完整：如果提取的文本远少于页面全文，说明 find_tables 遗漏了内容
-                if len(table_result) > len(text) * 0.4:
-                    return table_result
-                # 表格提取不完整，降级为全文提取
-                print(f"⚠️ find_tables 提取不完整 ({len(table_result)}/{len(text)} 字符)，降级为全文")
+            result = _tables_to_markdown(tables.tables)
+            if result and len(result) > len(text) * 0.3:
+                return result
     except Exception as e:
-        print(f"⚠️ PyMuPDF 表格提取失败: {e}")
-    
-    # 如果结构化提取失败，尝试按文本块分析（针对无边框表格）
-    # 检测是否可能是表格：数字对齐、多列布局等
+        print(f"⚠️ PyMuPDF 有边框表格提取失败: {e}")
+
+    # ---------- 2. 尝试无边框表格（text 策略） ----------
+    try:
+        # vertical_strategy='text' 会根据文本的列对齐来推断表格结构
+        tables = page.find_tables(
+            vertical_strategy='text',
+            horizontal_strategy='text',
+            snap_tolerance=3,
+            join_tolerance=3,
+        )
+        if tables.tables:
+            result = _tables_to_markdown(tables.tables)
+            if result and len(result) > len(text) * 0.3:
+                print(f"✅ 通过 text 策略提取到无边框表格 ({len(result)} 字符)")
+                return result
+    except Exception as e:
+        print(f"⚠️ PyMuPDF 无边框表格提取失败: {e}")
+
+    # ---------- 3. 文本块启发式分析 ----------
     blocks = page.get_text("blocks")
     if len(blocks) > 3:
-        # 简单的启发式：如果有很多文本块且包含数字，尝试格式化
         lines = text.split('\n')
         formatted_lines = []
-        
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            # 检测是否是财务数据行（包含数字和中文）
             has_chinese = bool(re.search(r'[\u4e00-\u9fff]', line))
             has_number = bool(re.search(r'\d', line))
             if has_chinese and has_number:
                 formatted_lines.append(line)
-        
         if len(formatted_lines) > 5:
             return "\n".join(formatted_lines)
-    
-    # 兜底：返回原始文本
+
+    # ---------- 4. 兜底 ----------
     return text
+
+
+def _tables_to_markdown(tables) -> str:
+    """将 PyMuPDF 提取的表格列表转为 Markdown 格式。"""
+    table_texts = []
+    for tab in tables:
+        rows = []
+        for row in tab.extract():
+            if row:
+                cleaned = [str(cell).strip() if cell else "" for cell in row]
+                rows.append("| " + " | ".join(cleaned) + " |")
+        if rows:
+            col_count = len(rows[0].split("|")) - 2
+            separator = "|" + "---|" * col_count
+            rows.insert(1, separator)
+            table_texts.append("\n".join(rows))
+    return "\n\n".join(table_texts) if table_texts else ""
 
 
 def _is_pymupdf_extraction_good(page_text: str) -> bool:
@@ -239,18 +247,27 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
             # strategy='lines' 适合财报这种有明显边框的表
             # vertical_strategy='text' 辅助无框表
             try:
+                # 先尝试 lines 策略（有边框表）
                 tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
-                
-                # 如果发现表格，且表格面积看起来不是误判（例如不是页眉页脚的小框）
+
+                # 再尝试 text 策略（无边框表）
+                if not tables.tables:
+                    tables = page.find_tables(
+                        vertical_strategy='text',
+                        horizontal_strategy='text',
+                        snap_tolerance=3,
+                        join_tolerance=3,
+                    )
+
+                # 如果发现表格，且表格面积看起来不是误判
                 has_valid_table = False
                 if tables.tables:
-                    # 简单判断：如果表格覆盖了一定区域
                     for tab in tables.tables:
-                        if len(tab.cells) > 4: # 至少有4个格子的才算表，过滤掉奇怪的框
+                        if len(tab.cells) > 4:
                             has_valid_table = True
                             break
-                
-                # 如果 PyMuPDF 没检测到，尝试启发式检测（针对无边框表格）
+
+                # 如果 PyMuPDF 两种策略都没检测到，尝试启发式检测
                 if not has_valid_table:
                     if _is_suspected_table_page(page):
                         print(f"👀 Page {i+1} 疑似包含无边框表格（启发式检测命中），将送往 LlamaParse。")
@@ -343,6 +360,15 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                             if idx < len(target_indices):
                                 original_page_idx = target_indices[idx]
                                 llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
+                        
+                        # 【修复】如果 LlamaParse 返回的文档数量不足，剩余页面 fallback 到 PyMuPDF
+                        if len(documents) < len(target_indices):
+                            print(f"⚠️ LlamaParse 仅返回 {len(documents)}/{len(target_indices)} 页，剩余页面降级为 PyMuPDF")
+                            for i in range(len(documents), len(target_indices)):
+                                original_page_idx = target_indices[i]
+                                page = doc[original_page_idx]
+                                text = _get_page_text(page)
+                                pymupdf_table_pages[original_page_idx] = f"--- Page {original_page_idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                     except Exception as e:
                         print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
                         for idx in target_indices:
@@ -389,6 +415,15 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                             original_page_idx = target_image_indices[idx]
                             llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse 图表提取) ---\n{result_doc.text}\n"
                             print(f"✅ Page {original_page_idx+1}: LlamaParse 图表提取成功")
+                    
+                    # 【修复】如果 LlamaParse 返回的文档数量不足，剩余页面保留原始文本
+                    if len(documents) < len(target_image_indices):
+                        print(f"⚠️ LlamaParse 图表提取仅返回 {len(documents)}/{len(target_image_indices)} 页")
+                        for i in range(len(documents), len(target_image_indices)):
+                            original_page_idx = target_image_indices[i]
+                            page = doc[original_page_idx]
+                            text = _get_page_text(page)
+                            text_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 仅返回部分结果]"
                 except Exception as e:
                     print(f"⚠️ LlamaParse 图表提取失败: {e}，保留原始文本")
                     for idx in target_image_indices:
