@@ -22,14 +22,14 @@ class SentenceTransformerEmbeddings(Embeddings):
             try:
                 device = get_device()
             except RuntimeError:
-                print("⚠️ CUDA 不可用，回退到 CPU（向量化会很慢）")
+                print("[WARN] CUDA 不可用，回退到 CPU（向量化会很慢）")
                 device = "cpu"
         # 优先使用本地缓存，避免联网下载超时
         try:
             self.model = SentenceTransformer(model_name, device=device, local_files_only=True)
-            print(f"✅ 模型从本地缓存加载: {model_name}")
+            print(f"[OK] 模型从本地缓存加载: {model_name}")
         except Exception:
-            print(f"⚠️ 本地缓存未命中，尝试联网下载: {model_name}")
+            print(f"[WARN] 本地缓存未命中，尝试联网下载: {model_name}")
             self.model = SentenceTransformer(model_name, device=device)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -65,11 +65,11 @@ def get_device():
     """
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name(0)
-        print(f"🟢 检测到 GPU: {device_name}")
+        print(f"[GPU] 检测到 GPU: {device_name}")
         return "cuda"
     else:
         raise RuntimeError(
-            "❌ 未检测到 CUDA GPU！RAG 向量化需要 GPU 加速。\n"
+            "[ERR] 未检测到 CUDA GPU！RAG 向量化需要 GPU 加速。\n"
             "请检查：\n"
             "1. 是否安装了 NVIDIA 驱动\n"
             "2. 是否安装了 CUDA Toolkit\n"
@@ -79,7 +79,7 @@ def get_device():
 def preview_chunks(full_text: str, max_chars: int = 500):
     """预览切块效果（简单按页切分）"""
     docs = _split_by_page(full_text)
-    print(f"📊 切块预览 | 总计 {len(docs)} 个块\n")
+    print(f"[STAT] 切块预览 | 总计 {len(docs)} 个块\n")
     for i, doc in enumerate(docs):
         page = doc.metadata.get("page_num", "?")
         content = doc.page_content[:max_chars] + "..." if len(doc.page_content) > max_chars else doc.page_content
@@ -333,7 +333,7 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
     global vector_store, PAGE_NUM_MAP, _current_pdf_hash, _pending_pdf_hash
     _pending_pdf_hash = pdf_hash  # 标记正在构建的 PDF
     device = get_device()
-    print(f"🔥 RAG 服务启动 | 计算设备: {device}")
+    print(f"[RAG] RAG 服务启动 | 计算设备: {device}")
     print(f"📂 INDEX_PATH: {INDEX_PATH}")
 
     with _vector_store_lock:
@@ -344,22 +344,22 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                     old_hash = INDEX_HASH_PATH.read_text().strip()
 
                 if pdf_hash == old_hash and os.path.exists(str(INDEX_PATH / "index.faiss")):
-                    print(f"♻️ 相同文件 (hash={pdf_hash[:8]}...)，尝试复用已有索引")
+                    print(f"[REUSE] 相同文件 (hash={pdf_hash[:8]}...)，尝试复用已有索引")
                     if _load_vector_store_internal():
                         # 【修复】校验：复用索引前，检查 full_text 生成的 chunk 数是否与索引向量数一致
                         temp_docs = _split_by_page(full_text)
                         expected = len(temp_docs)
                         actual = vector_store.index.ntotal
                         if expected == actual:
-                            print(f"✅ 索引一致性校验通过 ({actual} 条向量)，跳过重建")
+                            print(f"[OK] 索引一致性校验通过 ({actual} 条向量)，跳过重建")
                             _pending_pdf_hash = ""
                             return True
                         else:
-                            print(f"⚠️ 索引不一致：预期 {expected} 条向量，实际 {actual} 条。强制重建！")
+                            print(f"[WARN] 索引不一致：预期 {expected} 条向量，实际 {actual} 条。强制重建！")
                             vector_store = None
                             _reset_index_state()
                     else:
-                        print("⚠️ 旧索引加载失败，清空内存并强制重建")
+                        print("[WARN] 旧索引加载失败，清空内存并强制重建")
                         vector_store = None
                 else:
                     if old_hash and old_hash != pdf_hash:
@@ -373,20 +373,20 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
                 model_name="BAAI/bge-m3",
                 device=device
             )
-            print("✅ embedding 模型加载成功")
+            print("[OK] embedding 模型加载成功")
 
             print("🔪 正在按 PDF 页切分文本...")
             documents = _split_by_page(full_text)
-            print(f"✅ 切分完成：共生成 {len(documents)} 个碎片。")
+            print(f"[OK] 切分完成：共生成 {len(documents)} 个碎片。")
 
             if len(documents) == 0:
-                print("❌ 错误：切分后没有 chunks！")
+                print("[ERR] 错误：切分后没有 chunks！")
                 _pending_pdf_hash = ""
                 return False
 
             print("🧠 正在进行向量化...")
             new_store = FAISS.from_documents(documents, embeddings)
-            print("✅ FAISS 向量库创建成功")
+            print("[OK] FAISS 向量库创建成功")
 
             INDEX_PATH.mkdir(parents=True, exist_ok=True)
             new_store.save_local(str(INDEX_PATH))
@@ -405,15 +405,15 @@ def build_vector_store(full_text: str, pdf_hash: str = ""):
             
             # 【修复】校验：如果向量数和文档数不一致，打印警告
             if actual_vectors != expected_chunks:
-                print(f"⚠️ 警告：预期索引 {expected_chunks} 条向量，实际只有 {actual_vectors} 条！")
+                print(f"[WARN] 警告：预期索引 {expected_chunks} 条向量，实际只有 {actual_vectors} 条！")
             
             _pending_pdf_hash = ""
             return True
 
         except Exception as e:
             import traceback
-            print(f"❌ RAG 构建失败: {e}")
-            print(f"❌ 详细错误: {traceback.format_exc()}")
+            print(f"[ERR] RAG 构建失败: {e}")
+            print(f"[ERR] 详细错误: {traceback.format_exc()}")
             vector_store = None
             PAGE_NUM_MAP = {}
             _pending_pdf_hash = ""
@@ -454,7 +454,7 @@ def _load_vector_store_internal():
     print(f"🔍 尝试加载向量库: {index_path_str}")
     if os.path.exists(index_path_str):
         device = get_device()
-        print(f"♻️ 发现本地向量索引，正在加载 (Device: {device})...")
+        print(f"[REUSE] 发现本地向量索引，正在加载 (Device: {device})...")
         try:
             embeddings = SentenceTransformerEmbeddings(
                 model_name="BAAI/bge-m3",
@@ -462,10 +462,10 @@ def _load_vector_store_internal():
             )
             # allow_dangerous_deserialization=True is needed for recent langchain versions if loading pickle
             vector_store = FAISS.load_local(index_path_str, embeddings, allow_dangerous_deserialization=True)
-            print("✅ 本地索引加载成功！")
+            print("[OK] 本地索引加载成功！")
             return True
         except Exception as e:
-            print(f"⚠️ 本地索引加载失败: {e}")
+            print(f"[WARN] 本地索引加载失败: {e}")
             vector_store = None
             _clear_index()  # 删除损坏文件，防止无限重试
             return False
@@ -488,25 +488,25 @@ def query_rag(question: str, top_k: int = 5, similarity_threshold: float = 0.4):
 
     with _vector_store_lock:
         if vector_store is None:
-            print("⚠️ vector_store 为空，尝试加载...")
+            print("[WARN] vector_store 为空，尝试加载...")
             if not _load_vector_store_internal():
-                print("❌ 加载失败，返回错误消息")
+                print("[ERR] 加载失败，返回错误消息")
                 return "系统提示：知识库尚未建立，且无本地缓存。"
-        print("✅ vector_store 已就绪，执行相似度搜索...")
+        print("[OK] vector_store 已就绪，执行相似度搜索...")
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 
     # 按相似度阈值过滤（FAISS 余弦距离，分数越低越相似）
     filtered = [(doc, score) for doc, score in docs_and_scores if score <= (2 - similarity_threshold)]
 
     if not filtered:
-        print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
+        print(f"[WARN] 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
         if docs_and_scores:
             best_score = docs_and_scores[0][1]
-            print(f"📊 最高相似度仅为 {best_score:.4f}，低于阈值 {similarity_threshold}")
+            print(f"[STAT] 最高相似度仅为 {best_score:.4f}，低于阈值 {similarity_threshold}")
         return "未找到与问题高度相关的内容。请确认问题是否与当前上传的财报相关，或尝试换个问法。"
 
     # 打印每个文档的相似度分数（调试用）
-    print(f"📊 相似度分数:")
+    print(f"[STAT] 相似度分数:")
     for i, (doc, score) in enumerate(filtered):
         page = doc.metadata.get("page_num", "?")
         preview = doc.page_content[:50].replace("\n", " ")
@@ -598,11 +598,11 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
 
     with _vector_store_lock:
         if vector_store is None:
-            print("⚠️ vector_store 为空，尝试加载...")
+            print("[WARN] vector_store 为空，尝试加载...")
             if not _load_vector_store_internal():
-                print("❌ 加载失败")
+                print("[ERR] 加载失败")
                 return {"context": "系统提示：知识库尚未建立。", "page_num": 1}
-        print("✅ vector_store 已就绪，执行相似度搜索...")
+        print("[OK] vector_store 已就绪，执行相似度搜索...")
 
         # 主查询
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
@@ -632,10 +632,10 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
     filtered = [(doc, score) for doc, score in docs_and_scores if score <= max_distance]
 
     if not filtered:
-        print(f"⚠️ 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
+        print(f"[WARN] 所有文档相似度低于阈值 {similarity_threshold}，拒绝返回无关数据")
         if docs_and_scores:
             best_score = docs_and_scores[0][1]
-            print(f"📊 最高相似度仅为 {best_score:.4f}，低于阈值 {similarity_threshold}")
+            print(f"[STAT] 最高相似度仅为 {best_score:.4f}，低于阈值 {similarity_threshold}")
         return {
             "context": "未找到与问题高度相关的内容。请确认问题是否与当前上传的财报相关，或尝试换个问法。",
             "page_num": 1,
@@ -651,7 +651,7 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
     print(f"📄 检索到 {len(filtered)} 个有效文档（阈值: {similarity_threshold}）")
 
     # 打印每个文档的相似度分数（调试用）
-    print(f"📊 相似度分数:")
+    print(f"[STAT] 相似度分数:")
     for i, (doc, score) in enumerate(filtered):
         page = doc.metadata.get("page_num", "?")
         preview = doc.page_content[:50].replace("\n", " ")
