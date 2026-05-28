@@ -385,7 +385,7 @@ class TestSimpleQuery:
         from financial_report_ai_assistant.core.agent import is_simple_query
         assert is_simple_query("净利润有多少？") is True
 
-    def test_complex_roe_question(self):
+    def test_roe_simple_query(self):
         """ROE 相关问题走轻量查询，优先直接引用财报已有数值"""
         from financial_report_ai_assistant.core.agent import is_simple_query
         assert is_simple_query("ROE是多少？") is True

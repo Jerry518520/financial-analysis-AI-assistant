@@ -103,8 +103,8 @@ def test_agent_multi_tool():
 def test_simple_query_classification():
     assert is_simple_query("营收是多少？") == True
     assert is_simple_query("净利润有多少？") == True
-    assert is_simple_query("ROE是多少？") == False
-    assert is_simple_query("净资产收益率(ROE)是多少？") == False
+    assert is_simple_query("ROE是多少？") == True
+    assert is_simple_query("净资产收益率(ROE)是多少？") == True
     assert is_simple_query("分析公司的盈利能力") == False
     assert is_simple_query("请评估公司的偿债风险") == False
     assert is_simple_query("EPS是多少？") == False

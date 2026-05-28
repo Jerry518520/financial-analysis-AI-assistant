@@ -250,38 +250,73 @@ def compare_to_industry(value: float, industry_avg: float) -> dict:
 INDUSTRY_BENCHMARKS = {
     "制造业": {
         "毛利率": 0.25, "净利率": 0.08, "ROE": 0.10,
+        "营业利润率": 0.10, "成本费用利润率": 0.12,
         "资产负债率": 0.50, "流动比率": 1.50, "速动比率": 1.00,
+        "利息保障倍数": 5.0, "现金流动负债比": 0.25,
         "资产周转率": 0.80, "存货周转率": 4.00,
+        "应收账款周转率": 6.00, "现金回收率": 0.10,
+        "营收增长率": 0.08, "净利润增长率": 0.08,
+        "总资产增长率": 0.10, "资本保值增值率": 1.10,
     },
     "科技/互联网": {
         "毛利率": 0.45, "净利率": 0.15, "ROE": 0.12,
+        "营业利润率": 0.18, "成本费用利润率": 0.20,
         "资产负债率": 0.40, "流动比率": 2.00, "速动比率": 1.80,
+        "利息保障倍数": 8.0, "现金流动负债比": 0.30,
         "资产周转率": 0.60, "存货周转率": 10.00,
+        "应收账款周转率": 8.00, "现金回收率": 0.12,
+        "营收增长率": 0.15, "净利润增长率": 0.15,
+        "总资产增长率": 0.15, "资本保值增值率": 1.15,
     },
     "金融业": {
         "毛利率": None, "净利率": 0.30, "ROE": 0.11,
+        "营业利润率": 0.35, "成本费用利润率": None,
         "资产负债率": 0.90, "流动比率": None, "速动比率": None,
+        "利息保障倍数": None, "现金流动负债比": None,
         "资产周转率": 0.03, "存货周转率": None,
+        "应收账款周转率": None, "现金回收率": None,
+        "营收增长率": 0.08, "净利润增长率": 0.06,
+        "总资产增长率": 0.10, "资本保值增值率": 1.08,
     },
     "零售/消费品": {
         "毛利率": 0.30, "净利率": 0.05, "ROE": 0.12,
+        "营业利润率": 0.06, "成本费用利润率": 0.07,
         "资产负债率": 0.55, "流动比率": 1.30, "速动比率": 0.80,
+        "利息保障倍数": 4.0, "现金流动负债比": 0.20,
         "资产周转率": 1.20, "存货周转率": 6.00,
+        "应收账款周转率": 10.00, "现金回收率": 0.08,
+        "营收增长率": 0.10, "净利润增长率": 0.10,
+        "总资产增长率": 0.10, "资本保值增值率": 1.10,
     },
     "能源": {
         "毛利率": 0.20, "净利率": 0.06, "ROE": 0.09,
+        "营业利润率": 0.08, "成本费用利润率": 0.10,
         "资产负债率": 0.55, "流动比率": 1.20, "速动比率": 0.90,
+        "利息保障倍数": 4.0, "现金流动负债比": 0.20,
         "资产周转率": 0.70, "存货周转率": 8.00,
+        "应收账款周转率": 5.00, "现金回收率": 0.10,
+        "营收增长率": 0.05, "净利润增长率": 0.05,
+        "总资产增长率": 0.08, "资本保值增值率": 1.06,
     },
     "医药": {
         "毛利率": 0.55, "净利率": 0.12, "ROE": 0.13,
+        "营业利润率": 0.15, "成本费用利润率": 0.18,
         "资产负债率": 0.35, "流动比率": 2.20, "速动比率": 1.80,
+        "利息保障倍数": 8.0, "现金流动负债比": 0.30,
         "资产周转率": 0.50, "存货周转率": 3.50,
+        "应收账款周转率": 5.00, "现金回收率": 0.12,
+        "营收增长率": 0.12, "净利润增长率": 0.15,
+        "总资产增长率": 0.12, "资本保值增值率": 1.12,
     },
     "房地产": {
         "毛利率": 0.22, "净利率": 0.08, "ROE": 0.10,
+        "营业利润率": 0.10, "成本费用利润率": 0.12,
         "资产负债率": 0.70, "流动比率": 1.30, "速动比率": 0.50,
+        "利息保障倍数": 3.0, "现金流动负债比": 0.10,
         "资产周转率": 0.25, "存货周转率": 0.50,
+        "应收账款周转率": 8.00, "现金回收率": 0.05,
+        "营收增长率": 0.05, "净利润增长率": 0.05,
+        "总资产增长率": 0.08, "资本保值增值率": 1.05,
     },
 }
 
@@ -361,3 +396,204 @@ def calculate_variance(values: list) -> Union[float, str]:
     avg = sum(valid) / len(valid)
     variance = sum((x - avg) ** 2 for x in valid) / len(valid)
     return round(variance, 4)
+
+
+# ==================== 能力雷达图评分系统 ====================
+# 参考：国资委企业绩效评价标准 + CFA 财务分析框架 + Altman Z-Score
+
+DIMENSION_DEFINITIONS = {
+    "盈利能力": {
+        "metrics": ["毛利率", "净利率", "ROE", "营业利润率", "成本费用利润率"],
+        "inverted": set(),
+        "weight": 0.30,
+    },
+    "资产质量": {
+        "metrics": ["资产周转率", "存货周转率", "应收账款周转率", "现金回收率"],
+        "inverted": set(),
+        "weight": 0.20,
+    },
+    "债务风险": {
+        "metrics": ["资产负债率", "流动比率", "速动比率", "利息保障倍数", "现金流动负债比"],
+        "inverted": {"资产负债率"},
+        "weight": 0.20,
+    },
+    "经营增长": {
+        "metrics": ["营收增长率", "净利润增长率", "总资产增长率", "资本保值增值率"],
+        "inverted": set(),
+        "weight": 0.30,
+    },
+}
+
+# SASAC 五档评级
+GRADE_THRESHOLDS = [
+    (85, "优秀", "A"),
+    (70, "良好", "B"),
+    (50, "平均", "C"),
+    (30, "较低", "D"),
+    (0,  "较差", "E"),
+]
+
+
+def score_to_grade(score: float) -> str:
+    """将 0-100 分转换为 SASAC 五档评级。"""
+    for threshold, label, letter in GRADE_THRESHOLDS:
+        if score >= threshold:
+            return letter
+    return "E"
+
+
+def score_to_label(score: float) -> str:
+    """将 0-100 分转换为中文评级标签。"""
+    for threshold, label, letter in GRADE_THRESHOLDS:
+        if score >= threshold:
+            return label
+    return "较差"
+
+
+def score_metric(company_value: float, benchmark_value: float, inverted: bool = False) -> float:
+    """将单个指标与行业基准对比，归一化到 0-100 分。
+
+    基准值为 None/0 时返回 50（中性）。
+    正向指标：ratio = company/benchmark，score = ratio/2 * 100。
+    反向指标（如资产负债率，越低越好）：score = (2-ratio)/2 * 100。
+    """
+    if benchmark_value is None or benchmark_value == 0:
+        return 50.0
+    if company_value is None:
+        return 50.0
+
+    ratio = company_value / benchmark_value
+    ratio = max(0.0, min(ratio, 2.0))
+
+    if inverted:
+        score = (2.0 - ratio) / 2.0 * 100
+    else:
+        score = ratio / 2.0 * 100
+
+    return round(max(0.0, min(score, 100.0)), 1)
+
+
+def score_dimension(metrics: dict, benchmarks: dict, inverted_metrics: set = None) -> tuple:
+    """评分一个能力维度。
+
+    Returns: (dimension_score, detail_list)
+    """
+    if inverted_metrics is None:
+        inverted_metrics = set()
+
+    detail = []
+    scores = []
+
+    for name, company_val in metrics.items():
+        if company_val is None:
+            continue
+        benchmark_val = benchmarks.get(name)
+        if benchmark_val is None:
+            continue
+        inverted = name in inverted_metrics
+        s = score_metric(company_val, benchmark_val, inverted)
+        scores.append(s)
+        detail.append({
+            "name": name,
+            "company": company_val,
+            "benchmark": benchmark_val,
+            "score": s,
+        })
+
+    if not scores:
+        return 50.0, detail
+
+    return round(sum(scores) / len(scores), 1), detail
+
+
+def compute_altman_z_score(metrics: dict) -> dict | None:
+    """计算 Altman Z-Score 破产风险指标（适用于上市制造业）。
+
+    Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5
+    X1 = 营运资本 / 总资产
+    X2 = 留存收益 / 总资产
+    X3 = 息税前利润 / 总资产
+    X4 = 权益市值 / 负债总额
+    X5 = 营业收入 / 总资产
+
+    返回 None 表示数据不足无法计算。
+    """
+    required = ["营运资本比", "留存收益比", "EBIT资产比", "权益负债比", "资产周转率"]
+    vals = {}
+    for k in required:
+        v = metrics.get(k)
+        if v is None:
+            return None
+        vals[k] = v
+
+    z = (1.2 * vals["营运资本比"]
+         + 1.4 * vals["留存收益比"]
+         + 3.3 * vals["EBIT资产比"]
+         + 0.6 * vals["权益负债比"]
+         + 1.0 * vals["资产周转率"])
+
+    z = round(z, 2)
+    if z > 2.99:
+        zone = "安全"
+    elif z > 1.81:
+        zone = "灰色"
+    else:
+        zone = "危险"
+
+    return {"z_score": z, "zone": zone}
+
+
+def compute_radar_scores(company_metrics: dict, industry: str) -> dict:
+    """计算能力雷达图的各维度评分和综合评分（加权）。
+
+    参考国资委企业绩效评价标准，4 维度加权：
+    - 盈利能力 30%
+    - 资产质量 20%
+    - 债务风险 20%
+    - 经营增长 30%
+
+    company_metrics: {"毛利率": 0.25, "净利率": 0.08, ...}
+    industry: 行业名称，如"制造业"
+    """
+    benchmarks = INDUSTRY_BENCHMARKS.get(industry, {})
+
+    dimensions = []
+    for dim_name, dim_def in DIMENSION_DEFINITIONS.items():
+        dim_metrics = {
+            k: company_metrics.get(k)
+            for k in dim_def["metrics"]
+        }
+        dim_benchmarks = {
+            k: benchmarks.get(k)
+            for k in dim_def["metrics"]
+        }
+        dim_score, detail = score_dimension(dim_metrics, dim_benchmarks, dim_def["inverted"])
+
+        dimensions.append({
+            "name": dim_name,
+            "weight": dim_def["weight"],
+            "score": dim_score,
+            "grade": score_to_grade(dim_score),
+            "label": score_to_label(dim_score),
+            "detail": detail,
+        })
+
+    # 加权综合评分
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for d in dimensions:
+        weighted_sum += d["score"] * d["weight"]
+        total_weight += d["weight"]
+    composite = round(weighted_sum / total_weight, 1) if total_weight > 0 else 50.0
+
+    # Altman Z-Score（附加参考）
+    z_score = compute_altman_z_score(company_metrics)
+
+    return {
+        "dimensions": dimensions,
+        "composite_score": composite,
+        "composite_grade": score_to_grade(composite),
+        "composite_label": score_to_label(composite),
+        "industry": industry,
+        "z_score": z_score,
+    }

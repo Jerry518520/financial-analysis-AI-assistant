@@ -522,3 +522,273 @@ class TestIndustryBenchmarks:
         from financial_report_ai_assistant.services.financial_calculator import compare_to_industry
         result = compare_to_industry(0.20, 0.25)
         assert result["评价"] == "低于行业"
+
+
+# ============================================================
+# 16. score_metric — 单指标评分
+# ============================================================
+class TestScoreMetric:
+    def test_at_benchmark(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(0.25, 0.25) == 50.0
+
+    def test_double_benchmark(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(0.50, 0.25) == 100.0
+
+    def test_zero_company(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(0, 0.25) == 0.0
+
+    def test_benchmark_none(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(0.25, None) == 50.0
+
+    def test_benchmark_zero(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(0.25, 0) == 50.0
+
+    def test_company_none(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(None, 0.25) == 50.0
+
+    def test_inverted_at_benchmark(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(0.50, 0.50, inverted=True) == 50.0
+
+    def test_inverted_lower_is_better(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        # ratio=0.5, (2-0.5)/2*100 = 75
+        assert score_metric(0.25, 0.50, inverted=True) == 75.0
+
+    def test_inverted_higher_is_worse(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        # ratio=1.5, (2-1.5)/2*100 = 25
+        assert score_metric(0.75, 0.50, inverted=True) == 25.0
+
+    def test_clamp_upper(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(10.0, 0.25) == 100.0
+
+    def test_clamp_lower(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_metric
+        assert score_metric(-5.0, 0.25) == 0.0
+
+
+# ============================================================
+# 17. score_dimension — 维度评分
+# ============================================================
+class TestScoreDimension:
+    def test_full_metrics(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_dimension
+        metrics = {"毛利率": 0.30, "净利率": 0.10, "ROE": 0.12}
+        benchmarks = {"毛利率": 0.25, "净利率": 0.08, "ROE": 0.10}
+        score, detail = score_dimension(metrics, benchmarks)
+        assert 0 <= score <= 100
+        assert len(detail) == 3
+
+    def test_partial_metrics(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_dimension
+        metrics = {"毛利率": 0.30, "净利率": None, "ROE": 0.12}
+        benchmarks = {"毛利率": 0.25, "净利率": 0.08, "ROE": 0.10}
+        score, detail = score_dimension(metrics, benchmarks)
+        assert len(detail) == 2
+
+    def test_empty_metrics(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_dimension
+        score, detail = score_dimension({}, {})
+        assert score == 50.0
+        assert detail == []
+
+    def test_inverted_metrics(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_dimension
+        metrics = {"资产负债率": 0.40}
+        benchmarks = {"资产负债率": 0.50}
+        score, detail = score_dimension(metrics, benchmarks, {"资产负债率"})
+        # 0.40/0.50 = 0.8, inverted: (2-0.8)/2*100 = 60
+        assert score == 60.0
+
+
+# ============================================================
+# 18. score_to_grade — 字母评级
+# ============================================================
+class TestScoreToGrade:
+    def test_a_grade(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(95) == "A"
+        assert score_to_grade(85) == "A"
+
+    def test_b_grade(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(75) == "B"
+        assert score_to_grade(70) == "B"
+
+    def test_c_grade(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(55) == "C"
+        assert score_to_grade(50) == "C"
+
+    def test_d_grade(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(45) == "D"
+        assert score_to_grade(30) == "D"
+
+    def test_e_grade(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(20) == "E"
+        assert score_to_grade(0) == "E"
+
+    def test_boundary_85(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(85) == "A"
+        assert score_to_grade(84.9) == "B"
+
+    def test_boundary_70(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_grade
+        assert score_to_grade(70) == "B"
+        assert score_to_grade(69.9) == "C"
+
+
+# ============================================================
+# 19. compute_radar_scores — 雷达图综合评分
+# ============================================================
+class TestComputeRadarScores:
+    def test_basic(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+        company = {
+            "毛利率": 0.30, "净利率": 0.10, "ROE": 0.12,
+            "营业利润率": 0.10, "成本费用利润率": 0.12,
+            "资产负债率": 0.45, "流动比率": 1.60, "速动比率": 1.10,
+            "利息保障倍数": 5.0, "现金流动负债比": 0.25,
+            "资产周转率": 0.90, "存货周转率": 5.00,
+            "应收账款周转率": 6.00, "现金回收率": 0.10,
+            "营收增长率": 0.15, "净利润增长率": 0.10,
+            "总资产增长率": 0.10, "资本保值增值率": 1.10,
+        }
+        result = compute_radar_scores(company, "制造业")
+        assert "dimensions" in result
+        assert "composite_score" in result
+        assert "composite_grade" in result
+        assert "composite_label" in result
+        assert "z_score" in result
+        # SASAC 4 维度
+        assert len(result["dimensions"]) == 4
+        assert 0 <= result["composite_score"] <= 100
+        assert result["industry"] == "制造业"
+        # 每个维度都有 grade、label、weight 字段
+        for d in result["dimensions"]:
+            assert "grade" in d
+            assert "label" in d
+            assert "weight" in d
+            assert d["grade"] in ("A", "B", "C", "D", "E")
+            assert d["label"] in ("优秀", "良好", "平均", "较低", "较差")
+        # 权重之和为 1
+        total_weight = sum(d["weight"] for d in result["dimensions"])
+        assert abs(total_weight - 1.0) < 0.01
+
+    def test_missing_metrics(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+        company = {"毛利率": 0.30}
+        result = compute_radar_scores(company, "制造业")
+        assert result["composite_score"] > 0
+
+    def test_unknown_industry(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+        company = {"毛利率": 0.30, "净利率": 0.10}
+        result = compute_radar_scores(company, "未知行业")
+        # 无基准，所有维度返回 50
+        assert result["composite_score"] == 50.0
+
+    def test_dimension_names(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+        company = {"毛利率": 0.30}
+        result = compute_radar_scores(company, "制造业")
+        dim_names = [d["name"] for d in result["dimensions"]]
+        assert "盈利能力" in dim_names
+        assert "资产质量" in dim_names
+        assert "债务风险" in dim_names
+        assert "经营增长" in dim_names
+
+    def test_weights_sum_to_one(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+        result = compute_radar_scores({}, "制造业")
+        total = sum(d["weight"] for d in result["dimensions"])
+        assert abs(total - 1.0) < 0.01
+
+
+# ============================================================
+# 20. score_to_label — 中文评级标签
+# ============================================================
+class TestScoreToLabel:
+    def test_excellent(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_label
+        assert score_to_label(90) == "优秀"
+
+    def test_good(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_label
+        assert score_to_label(75) == "良好"
+
+    def test_average(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_label
+        assert score_to_label(55) == "平均"
+
+    def test_low(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_label
+        assert score_to_label(35) == "较低"
+
+    def test_poor(self):
+        from financial_report_ai_assistant.services.financial_calculator import score_to_label
+        assert score_to_label(10) == "较差"
+
+
+# ============================================================
+# 21. compute_altman_z_score — Altman Z-Score 破产风险
+# ============================================================
+class TestComputeAltmanZScore:
+    def test_safe_zone(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_altman_z_score
+        metrics = {
+            "营运资本比": 0.15,
+            "留存收益比": 0.20,
+            "EBIT资产比": 0.12,
+            "权益负债比": 2.0,
+            "资产周转率": 1.0,
+        }
+        result = compute_altman_z_score(metrics)
+        assert result is not None
+        assert result["zone"] == "安全"
+        assert result["z_score"] > 2.99
+
+    def test_danger_zone(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_altman_z_score
+        metrics = {
+            "营运资本比": -0.10,
+            "留存收益比": -0.05,
+            "EBIT资产比": 0.02,
+            "权益负债比": 0.3,
+            "资产周转率": 0.5,
+        }
+        result = compute_altman_z_score(metrics)
+        assert result is not None
+        assert result["zone"] == "危险"
+        assert result["z_score"] < 1.81
+
+    def test_gray_zone(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_altman_z_score
+        metrics = {
+            "营运资本比": 0.10,
+            "留存收益比": 0.15,
+            "EBIT资产比": 0.08,
+            "权益负债比": 1.5,
+            "资产周转率": 0.8,
+        }
+        result = compute_altman_z_score(metrics)
+        assert result is not None
+        assert result["zone"] == "灰色"
+        assert 1.81 < result["z_score"] < 2.99
+
+    def test_missing_data(self):
+        from financial_report_ai_assistant.services.financial_calculator import compute_altman_z_score
+        metrics = {"营运资本比": 0.05}
+        result = compute_altman_z_score(metrics)
+        assert result is None

@@ -605,15 +605,13 @@ def run_agent_query(query: str, context: str = ""):
 
 # ==================== 轻量级查询（简单问题快速通道） ====================
 
-import re as _re
-
 _SIMPLE_QUERY_PATTERNS = [
     r"是多少", r"有多少", r"多少", r"是什么", r"有哪些",
     r"列出", r"写出来", r"给出",
     r"营收", r"收入", r"利润", r"净利润", r"毛利",
     r"资产", r"负债", r"现金流", r"现金",
     r"毛利率", r"资产负债率", r"流动比率", r"速动比率",
-    r"股息",
+    r"ROE", r"净资产收益率", r"股息",
 ]
 
 _NEEDS_AGENT_PATTERNS = [
@@ -633,10 +631,10 @@ def is_simple_query(question: str) -> bool:
     if len(q) > 50:
         return False
     for pattern in _NEEDS_AGENT_PATTERNS:
-        if _re.search(pattern, q):
+        if re.search(pattern, q):
             return False
     for pattern in _SIMPLE_QUERY_PATTERNS:
-        if _re.search(pattern, q):
+        if re.search(pattern, q):
             return True
     return False
 
