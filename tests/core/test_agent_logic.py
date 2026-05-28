@@ -386,8 +386,9 @@ class TestSimpleQuery:
         assert is_simple_query("净利润有多少？") is True
 
     def test_complex_roe_question(self):
+        """ROE 相关问题走轻量查询，优先直接引用财报已有数值"""
         from financial_report_ai_assistant.core.agent import is_simple_query
-        assert is_simple_query("ROE是多少？") is False
+        assert is_simple_query("ROE是多少？") is True
 
     def test_complex_analysis_question(self):
         from financial_report_ai_assistant.core.agent import is_simple_query
@@ -403,10 +404,10 @@ class TestSimpleQuery:
         from financial_report_ai_assistant.core.agent import is_simple_query
         assert is_simple_query("净利率是多少？") is False
 
-    def test_quick_ratio_needs_agent(self):
-        """速动比率需要计算工具，应走 Agent 路径"""
+    def test_quick_ratio_simple_query(self):
+        """速动比率走轻量查询，优先直接引用财报已有数值"""
         from financial_report_ai_assistant.core.agent import is_simple_query
-        assert is_simple_query("速动比率是多少？") is False
+        assert is_simple_query("速动比率是多少？") is True
 
     def test_turnover_needs_agent(self):
         """周转率需要计算工具，应走 Agent 路径"""
