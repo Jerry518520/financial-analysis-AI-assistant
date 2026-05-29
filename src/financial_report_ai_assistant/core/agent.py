@@ -245,6 +245,8 @@ def create_llm():
         api_key=api_key,
         base_url="https://api.deepseek.com",
         temperature=0.1,
+        timeout=60,
+        max_retries=2,
     )
 
 
@@ -432,13 +434,24 @@ def agent_node(state: AgentState):
             "iteration": iteration + 1,
         }
     else:
-        # LLM 没有调用工具 → 直接给出答案（可能是"未找到数据"或简单推理）
-        if response.content.strip():
-            # 如果有内容，直接作为最终答案
-            return {
-                "final_answer": response.content.strip(),
-                "iteration": iteration,
-            }
+        content = (response.content or "").strip()
+        tool_results = state.get("tool_results", [])
+
+        # LLM 没有调用工具，但有内容
+        if content:
+            # 如果已有工具结果 → LLM 在基于工具数据回答，视为最终答案
+            if tool_results:
+                return {
+                    "final_answer": content,
+                    "iteration": iteration,
+                }
+            # 没有工具结果 → 内容可能是中间推理过程（"让我调用工具计算一下"）
+            # 跳过，让 answer_node 基于 context 生成正式回答
+            else:
+                print(f"⚠️ LLM 返回内容但未调用工具，跳过: {content[:60]}...")
+                return {
+                    "iteration": iteration,
+                }
         else:
             # 空回答，停止循环让 answer_node 生成
             return {
