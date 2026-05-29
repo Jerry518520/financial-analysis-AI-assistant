@@ -11,6 +11,12 @@ import re
 
 router = APIRouter()
 
+def _extract_cited_pages(text: str) -> list:
+    """从 LLM 回答中提取引用的页码（如"根据第3页数据"或"（第3页）"）"""
+    return list(dict.fromkeys(
+        int(m) for m in re.findall(r'第(\d+)页', text)
+    ))
+
 class AnalysisRequest(BaseModel):
     focus: str = "general" # general, financial, risk, business
 
@@ -115,7 +121,10 @@ async def generate_report_summary(request: AnalysisRequest):
     try:
         print("💡 正在生成摘要...")
         summary = await asyncio.to_thread(chain.invoke, {"context": full_context, "focus_hint": focus_hint})
-        return {"summary": summary, "source_pages": sorted(all_source_pages)}
+        # 只展示 LLM 实际引用的页码，兜底用向量检索的来源页
+        cited = _extract_cited_pages(summary)
+        source_pages = cited if cited else sorted(all_source_pages)
+        return {"summary": summary, "source_pages": source_pages}
     except Exception as e:
         print(f"❌ 摘要生成失败: {e}")
         return JSONResponse(status_code=500, content={"error": f"生成摘要时发生错误: {str(e)}"})

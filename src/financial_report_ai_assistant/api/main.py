@@ -136,7 +136,7 @@ async def chat_with_report(request: ChatRequest):
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
 
-        # 保留所有来源页面（LLM 基于全部 chunk 回答，来源页码应覆盖所有检索到的页面）
+        # source_pages 仅作为兜底，最终来源以 LLM 实际引用的页码为准
 
         print(f"[CHAT] 用户问: {request.question}")
         print(f"[RAG] 返回页码: {page_num}，所有来源页: {source_pages}")
@@ -167,7 +167,6 @@ async def chat_with_report(request: ChatRequest):
             request_pdf_hash=request.pdf_hash
         )
 
-        # source_pages 已与 LLM 上下文中的页码完全一致，无需额外约束
 
         # 简单问题走轻量级通道（1次LLM调用 vs Agent的3-4次）
         from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
@@ -186,9 +185,10 @@ async def chat_with_report(request: ChatRequest):
         recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
         print(f"[CHAT] 推荐问题: {recommendations}")
 
-        # 合并 RAG 来源页码与 LLM 回答中引用的页码，确保"查看来源"覆盖回答中所有引用的页面
+        # 只展示 LLM 实际引用的页码，而非所有检索到的页面
+        # 兜底：如果 LLM 回答中未提取到页码，使用向量检索的来源页
         cited_pages = _extract_cited_pages(answer)
-        merged_pages = list(dict.fromkeys(source_pages + cited_pages))
+        merged_pages = cited_pages if cited_pages else source_pages
 
         return {
             "answer": answer,
