@@ -3,9 +3,15 @@ import hashlib
 import fitz  # PyMuPDF
 import re
 import html as html_mod
-from llama_parse import LlamaParse
 from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
+
+# LlamaParse 可选依赖（免费额度有限，未配置 API Key 时自动跳过）
+try:
+    from llama_parse import LlamaParse
+    LLAMA_PARSE_AVAILABLE = True
+except ImportError:
+    LLAMA_PARSE_AVAILABLE = False
 
 load_dotenv()
 
@@ -376,9 +382,9 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                 # 发送给 LlamaParse
                 print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
                 api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-                if not api_key:
-                    # 没有 API key，降级为 PyMuPDF
-                    print("⚠️ 缺少 LLAMA_CLOUD_API_KEY，降级为 PyMuPDF 提取")
+                if not api_key or not LLAMA_PARSE_AVAILABLE:
+                    # 没有 API key 或未安装 llama-parse，降级为 PyMuPDF
+                    print("⚠️ LlamaParse 不可用（缺少 API Key 或未安装），降级为 PyMuPDF 提取")
                     for idx in target_indices:
                         page = doc[idx]
                         text = _get_page_text(page)
@@ -429,8 +435,8 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
         # 3b. 处理图片/图表页面（直接送往 LlamaParse，跳过 PyMuPDF）
         if image_pages_indices:
             api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-            if not api_key:
-                print(f"⚠️ 缺少 LLAMA_CLOUD_API_KEY，{len(image_pages_indices)} 页图表无法提取")
+            if not api_key or not LLAMA_PARSE_AVAILABLE:
+                print(f"⚠️ LlamaParse 不可用（{len(image_pages_indices)} 页图表将保留原始文本）")
                 for idx in image_pages_indices:
                     page = doc[idx]
                     text = _get_page_text(page)
