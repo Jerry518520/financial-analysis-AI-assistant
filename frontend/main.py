@@ -927,13 +927,23 @@ if 'result' not in st.session_state:
         uploaded_file = st.file_uploader("选择 PDF 文件", type="pdf", label_visibility="collapsed")
 
         if uploaded_file is not None:
+            parser_choice = st.selectbox(
+                "解析引擎",
+                options=["llamaparse", "kimi"],
+                format_func=lambda x: "🔮 Kimi 多模态" if x == "kimi" else "📄 LlamaParse",
+                key="parser_choice_init",
+            )
             if st.button("🚀 开始解析", type="primary", use_container_width=True):
                 with st.spinner("📤 正在上传文件..."):
                     progress = st.progress(0)
                     try:
                         files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
                         progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
+                        resp = requests.post(
+                            f"{API_URL}/upload", files=files,
+                            params={"parser": st.session_state.get("parser_choice_init", "llamaparse")},
+                            timeout=600,
+                        )
                         progress.progress(70, text="🧠 正在构建 RAG 向量库...")
                         if resp.status_code == 200:
                             progress.progress(100, text="✅ 解析完成！")
@@ -985,13 +995,23 @@ else:
         uploaded_file = st.file_uploader("替换 PDF 文件", type="pdf", label_visibility="collapsed")
 
         if uploaded_file is not None:
+            parser_choice = st.selectbox(
+                "解析引擎",
+                options=["llamaparse", "kimi"],
+                format_func=lambda x: "🔮 Kimi 多模态" if x == "kimi" else "📄 LlamaParse",
+                key="parser_choice_re",
+            )
             if st.button("🚀 重新解析", type="primary", use_container_width=True):
                 with st.spinner("📤 正在上传文件..."):
                     progress = st.progress(0)
                     try:
                         files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
                         progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
+                        resp = requests.post(
+                            f"{API_URL}/upload", files=files,
+                            params={"parser": st.session_state.get("parser_choice_re", "llamaparse")},
+                            timeout=600,
+                        )
                         progress.progress(70, text="🧠 正在构建 RAG 向量库...")
                         if resp.status_code == 200:
                             progress.progress(100, text="✅ 解析完成！")

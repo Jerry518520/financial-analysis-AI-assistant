@@ -3,6 +3,8 @@ import hashlib
 import fitz  # PyMuPDF
 import re
 import html as html_mod
+import base64
+import requests
 from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
 
@@ -83,6 +85,67 @@ def _detect_language(doc, sample_pages: int = 5) -> str:
         return LLAMA_LANG_MAP["chinese"]
     
     return LLAMA_LANG_MAP["english"]
+
+
+# ==================== Kimi 多模态解析 ====================
+
+KIMI_API_URL = "https://api.moonshot.cn/v1/chat/completions"
+KIMI_MODEL = os.getenv("KIMI_MODEL", "moonshot-v1-8k-vision-preview")
+
+KIMI_PARSE_PROMPT = """请仔细分析这张财报页面图片，提取其中的所有内容，以 Markdown 格式输出。
+
+要求：
+1. 文字内容直接输出
+2. 表格用 Markdown 表格格式输出（| 分隔），保持原始列顺序和年份标注
+3. 如果有图表，描述图表的关键数据和趋势
+4. 保留页码、脚注等辅助信息
+5. 不要添加任何解释或总结，只输出页面原始内容"""
+
+
+def _parse_page_with_kimi(page_image_bytes: bytes, page_num: int) -> str:
+    """用 Kimi 多模态模型解析单个 PDF 页面图片，返回 Markdown 文本。"""
+    api_key = os.getenv("KIMI_API_KEY")
+    if not api_key:
+        return ""
+
+    b64_image = base64.b64encode(page_image_bytes).decode("utf-8")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": KIMI_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}},
+                    {"type": "text", "text": KIMI_PARSE_PROMPT},
+                ],
+            }
+        ],
+        "max_tokens": 4096,
+        "temperature": 0.1,
+    }
+
+    try:
+        resp = requests.post(KIMI_API_URL, headers=headers, json=payload, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        print(f"✅ Kimi Page {page_num}: {len(content)} chars")
+        return content
+    except Exception as e:
+        print(f"⚠️ Kimi Page {page_num} 解析失败: {e}")
+        return ""
+
+
+def _render_page_to_png(page, dpi: int = 200) -> bytes:
+    """将 PDF 页面渲染为 PNG 图片字节。"""
+    mat = fitz.Matrix(dpi / 72, dpi / 72)
+    pix = page.get_pixmap(matrix=mat)
+    return pix.tobytes("png")
 
 def _is_suspected_table_page(page) -> bool:
     """
@@ -258,16 +321,22 @@ def _is_pymupdf_extraction_good(page_text: str) -> bool:
     # 质量标准：有财务关键词 + 数字密度 > 1.5% + 行数 > 3
     return has_financial_kw and digit_ratio > 0.015 and line_count > 3
 
-def get_cache_path(file_content: bytes) -> str:
-    # 简单的哈希缓存，避免重复解析同一文件
+def get_cache_path(file_content: bytes, parser: str = "llamaparse") -> str:
+    """根据文件内容和解析引擎生成缓存路径，不同 parser 的缓存互不干扰。"""
     file_hash = hashlib.md5(file_content).hexdigest()
-    return os.path.join(CACHE_DIR, f"parsed_hybrid_{file_hash}.md")
+    return os.path.join(CACHE_DIR, f"parsed_hybrid_{parser}_{file_hash}.md")
 
-def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
-    print(f"🚀 [Hybrid Parser] 启动混合解析引擎...")
-    
-    # 1. 检查全量缓存
-    cache_path = get_cache_path(file_content)
+def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str, Any]:
+    """解析 PDF 文件内容，返回结构化文本。
+
+    Args:
+        file_content: PDF 文件的字节内容
+        parser: 解析引擎选择 - "llamaparse" 或 "kimi"
+    """
+    print(f"🚀 [Hybrid Parser] 启动混合解析引擎 (parser={parser})...")
+
+    # 1. 检查全量缓存（缓存键包含 parser 选择）
+    cache_path = get_cache_path(file_content, parser)
     if os.path.exists(cache_path):
         print(f"♻️ 发现本地完整缓存！直接加载...")
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -360,131 +429,140 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     print(f"⚠️ Page {idx+1}: PyMuPDF 效果不佳，将使用 LlamaParse")
                     pages_need_llama.append(idx)
             
-            # 对 PyMuPDF 效果不好的页面，使用 LlamaParse（限制数量）
+            # 对 PyMuPDF 效果不好的页面，使用外部解析引擎
             if pages_need_llama:
-                target_indices = pages_need_llama[:MAX_LLAMA_PAGES]
-                if len(pages_need_llama) > MAX_LLAMA_PAGES:
-                    print(f"⚠️ 需要 LlamaParse 的页面共 {len(pages_need_llama)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
-                    # 剩余的页面降级为纯文本
-                    for idx in pages_need_llama[MAX_LLAMA_PAGES:]:
+                if parser == "kimi":
+                    # Kimi 多模态：逐页渲染为图片并解析，无页数限制
+                    print(f"🔮 使用 Kimi 多模态解析 {len(pages_need_llama)} 页表格...")
+                    for idx in pages_need_llama:
                         page = doc[idx]
-                        text = _get_page_text(page)
-                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-                
-                # 构建临时 PDF 子集
-                subset_filename = f"temp_tables_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
-                new_doc = fitz.open()
-                for idx in target_indices:
-                    new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
-                new_doc.save(subset_filename)
-                new_doc.close()
-                
-                # 发送给 LlamaParse
-                print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
-                api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-                if not api_key or not LLAMA_PARSE_AVAILABLE:
-                    # 没有 API key 或未安装 llama-parse，降级为 PyMuPDF
-                    print("⚠️ LlamaParse 不可用（缺少 API Key 或未安装），降级为 PyMuPDF 提取")
-                    for idx in target_indices:
-                        page = doc[idx]
-                        text = _get_page_text(page)
-                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                        img_bytes = _render_page_to_png(page)
+                        result = _parse_page_with_kimi(img_bytes, idx + 1)
+                        if result:
+                            llama_pages_content[idx] = f"--- Page {idx+1} (Kimi Enhanced) ---\n{result}\n"
+                        else:
+                            text = _get_page_text(page)
+                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                 else:
-                    # 自动检测文档语言
-                    detected_lang = _detect_language(doc)
-                    print(f"🌍 检测到文档语言: {detected_lang}，使用对应 LlamaParse 配置")
-                    
-                    try:
-                        parser = LlamaParse(result_type="markdown", premium_mode=False, language=detected_lang)
-                        documents = parser.load_data(subset_filename)
-                        
-                        # 映射回原始页码
-                        for idx, result_doc in enumerate(documents):
-                            if idx < len(target_indices):
-                                original_page_idx = target_indices[idx]
-                                llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
-                            else:
-                                # LlamaParse 返回多于输入页数时（大表格拆分），追加到最后一个目标页
-                                last_page_idx = target_indices[-1]
-                                if last_page_idx in llama_pages_content:
-                                    llama_pages_content[last_page_idx] += f"\n{result_doc.text}\n"
-                                    print(f"📎 LlamaParse 多余文档 #{idx+1} 追加到 Page {last_page_idx+1}")
-                        
-                        # 【修复】如果 LlamaParse 返回的文档数量不足，剩余页面 fallback 到 PyMuPDF
-                        if len(documents) < len(target_indices):
-                            print(f"⚠️ LlamaParse 仅返回 {len(documents)}/{len(target_indices)} 页，剩余页面降级为 PyMuPDF")
-                            for i in range(len(documents), len(target_indices)):
-                                original_page_idx = target_indices[i]
-                                page = doc[original_page_idx]
-                                text = _get_page_text(page)
-                                pymupdf_table_pages[original_page_idx] = f"--- Page {original_page_idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-                    except Exception as e:
-                        print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
+                    # LlamaParse：限制页数
+                    target_indices = pages_need_llama[:MAX_LLAMA_PAGES]
+                    if len(pages_need_llama) > MAX_LLAMA_PAGES:
+                        print(f"⚠️ 需要 LlamaParse 的页面共 {len(pages_need_llama)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
+                        for idx in pages_need_llama[MAX_LLAMA_PAGES:]:
+                            page = doc[idx]
+                            text = _get_page_text(page)
+                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+
+                    api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+                    if not api_key or not LLAMA_PARSE_AVAILABLE:
+                        print("⚠️ LlamaParse 不可用（缺少 API Key 或未安装），降级为 PyMuPDF 提取")
                         for idx in target_indices:
                             page = doc[idx]
                             text = _get_page_text(page)
                             pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-                
-                # 清理临时文件
-                if os.path.exists(subset_filename):
-                    try:
-                        os.remove(subset_filename)
-                    except OSError:
-                        pass
+                    else:
+                        subset_filename = f"temp_tables_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
+                        new_doc = fitz.open()
+                        for idx in target_indices:
+                            new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+                        new_doc.save(subset_filename)
+                        new_doc.close()
 
-        # 3b. 处理图片/图表页面（直接送往 LlamaParse，跳过 PyMuPDF）
+                        detected_lang = _detect_language(doc)
+                        print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
+                        try:
+                            llama_parser = LlamaParse(result_type="markdown", premium_mode=False, language=detected_lang)
+                            documents = llama_parser.load_data(subset_filename)
+                            for idx, result_doc in enumerate(documents):
+                                if idx < len(target_indices):
+                                    original_page_idx = target_indices[idx]
+                                    llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
+                                else:
+                                    last_page_idx = target_indices[-1]
+                                    if last_page_idx in llama_pages_content:
+                                        llama_pages_content[last_page_idx] += f"\n{result_doc.text}\n"
+                            if len(documents) < len(target_indices):
+                                for i in range(len(documents), len(target_indices)):
+                                    original_page_idx = target_indices[i]
+                                    page = doc[original_page_idx]
+                                    text = _get_page_text(page)
+                                    pymupdf_table_pages[original_page_idx] = f"--- Page {original_page_idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                        except Exception as e:
+                            print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
+                            for idx in target_indices:
+                                page = doc[idx]
+                                text = _get_page_text(page)
+                                pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+
+                        if os.path.exists(subset_filename):
+                            try:
+                                os.remove(subset_filename)
+                            except OSError:
+                                pass
+
+        # 3b. 处理图片/图表页面
         if image_pages_indices:
-            api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-            if not api_key or not LLAMA_PARSE_AVAILABLE:
-                print(f"⚠️ LlamaParse 不可用（{len(image_pages_indices)} 页图表将保留原始文本）")
+            if parser == "kimi":
+                # Kimi 多模态：逐页渲染为图片并解析，无页数限制
+                print(f"🔮 使用 Kimi 多模态解析 {len(image_pages_indices)} 页图表...")
                 for idx in image_pages_indices:
                     page = doc[idx]
-                    text = _get_page_text(page)
-                    text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，缺少 API Key 无法自动提取]"
+                    img_bytes = _render_page_to_png(page)
+                    result = _parse_page_with_kimi(img_bytes, idx + 1)
+                    if result:
+                        llama_pages_content[idx] = f"--- Page {idx+1} (Kimi 图表提取) ---\n{result}\n"
+                        print(f"✅ Page {idx+1}: Kimi 图表提取成功")
+                    else:
+                        text = _get_page_text(page)
+                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，Kimi 解析失败]"
             else:
-                # 限制图表页面数量，避免消耗过多额度
-                target_image_indices = image_pages_indices[:MAX_LLAMA_PAGES]
-                if len(image_pages_indices) > MAX_LLAMA_PAGES:
-                    print(f"⚠️ 图表页面共 {len(image_pages_indices)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
-
-                subset_filename = f"temp_images_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
-                new_doc = fitz.open()
-                for idx in target_image_indices:
-                    new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
-                new_doc.save(subset_filename)
-                new_doc.close()
-
-                print(f"💸 正在调用 LlamaParse 处理 {len(target_image_indices)} 页图表...")
-                detected_lang = _detect_language(doc)
-                try:
-                    parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
-                    documents = parser.load_data(subset_filename)
-                    for idx, result_doc in enumerate(documents):
-                        if idx < len(target_image_indices):
-                            original_page_idx = target_image_indices[idx]
-                            llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse 图表提取) ---\n{result_doc.text}\n"
-                            print(f"✅ Page {original_page_idx+1}: LlamaParse 图表提取成功")
-                    
-                    # 【修复】如果 LlamaParse 返回的文档数量不足，剩余页面保留原始文本
-                    if len(documents) < len(target_image_indices):
-                        print(f"⚠️ LlamaParse 图表提取仅返回 {len(documents)}/{len(target_image_indices)} 页")
-                        for i in range(len(documents), len(target_image_indices)):
-                            original_page_idx = target_image_indices[i]
-                            page = doc[original_page_idx]
-                            text = _get_page_text(page)
-                            text_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 仅返回部分结果]"
-                except Exception as e:
-                    print(f"⚠️ LlamaParse 图表提取失败: {e}，保留原始文本")
-                    for idx in target_image_indices:
+                # LlamaParse
+                api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+                if not api_key or not LLAMA_PARSE_AVAILABLE:
+                    print(f"⚠️ LlamaParse 不可用（{len(image_pages_indices)} 页图表将保留原始文本）")
+                    for idx in image_pages_indices:
                         page = doc[idx]
                         text = _get_page_text(page)
-                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 提取失败]"
+                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，缺少 API Key 无法自动提取]"
+                else:
+                    target_image_indices = image_pages_indices[:MAX_LLAMA_PAGES]
+                    if len(image_pages_indices) > MAX_LLAMA_PAGES:
+                        print(f"⚠️ 图表页面共 {len(image_pages_indices)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
 
-                if os.path.exists(subset_filename):
+                    subset_filename = f"temp_images_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
+                    new_doc = fitz.open()
+                    for idx in target_image_indices:
+                        new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+                    new_doc.save(subset_filename)
+                    new_doc.close()
+
+                    print(f"💸 正在调用 LlamaParse 处理 {len(target_image_indices)} 页图表...")
+                    detected_lang = _detect_language(doc)
                     try:
-                        os.remove(subset_filename)
-                    except OSError:
-                        pass
+                        llama_parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
+                        documents = llama_parser.load_data(subset_filename)
+                        for idx, result_doc in enumerate(documents):
+                            if idx < len(target_image_indices):
+                                original_page_idx = target_image_indices[idx]
+                                llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse 图表提取) ---\n{result_doc.text}\n"
+                        if len(documents) < len(target_image_indices):
+                            for i in range(len(documents), len(target_image_indices)):
+                                original_page_idx = target_image_indices[i]
+                                page = doc[original_page_idx]
+                                text = _get_page_text(page)
+                                text_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 仅返回部分结果]"
+                    except Exception as e:
+                        print(f"⚠️ LlamaParse 图表提取失败: {e}，保留原始文本")
+                        for idx in target_image_indices:
+                            page = doc[idx]
+                            text = _get_page_text(page)
+                            text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 提取失败]"
+
+                    if os.path.exists(subset_filename):
+                        try:
+                            os.remove(subset_filename)
+                        except OSError:
+                            pass
 
         # 4. 合并所有内容 (按页码顺序)
         # 优先级：LlamaParse > PyMuPDF 表格 > 纯文本

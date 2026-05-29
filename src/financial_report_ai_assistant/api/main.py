@@ -58,7 +58,12 @@ def read_root():
     return {"status": "ok"}
 
 @app.post("/upload")
-async def upload_financial_report(file: UploadFile = File(...)):
+async def upload_financial_report(file: UploadFile = File(...), parser: str = "llamaparse"):
+    """上传并解析财报 PDF。
+
+    Args:
+        parser: 解析引擎选择 - "llamaparse" 或 "kimi"
+    """
     global CURRENT_PDF_PATH
     content = await file.read()
     
@@ -77,7 +82,7 @@ async def upload_financial_report(file: UploadFile = File(...)):
         print(f"[PDF] 已保存: {pdf_path}")
 
         # 1. 解析 PDF (获取全量文本)
-        result = parse_pdf_bytes(content)
+        result = parse_pdf_bytes(content, parser=parser)
         
         # 2. 构建 RAG 向量库（传入文件哈希，新文件自动重建索引）
         full_text = result.get("full_text", "")
