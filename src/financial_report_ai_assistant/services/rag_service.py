@@ -208,9 +208,10 @@ _ROW_METRIC_TAGS = {
 
 def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
     """从表格中提取包含关键财务指标的行作为独立 chunk，提高检索精度。
-    
-    每个关键行前面会附加关联计算指标标签，确保用户查询"存货周转率"时，
-    "存货"和"营业成本"的行能被高相似度召回。
+
+    每个关键行前面会附加：
+    1. 表头行（年份列标签，如"2025年 | 2024年"），确保 LLM 能正确归属数值
+    2. 关联计算指标标签，确保用户查询"存货周转率"时，"存货"等行能被高相似度召回
     """
     key_indicators = [
         "资产总额", "资产总计", "负债总额", "负债总计",
@@ -223,6 +224,21 @@ def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
         "资产负债率", "流动比率", "速动比率", "ROE", "ROA",
         "资产周转率", "总资产周转率", "存货周转率", "应收账款周转率",
     ]
+
+    # 提取表头行（第一个非分隔、非空的 | 开头行）
+    header_row = ""
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line.startswith('|'):
+            continue
+        if re.match(r'^\|[-\s|]+\|$', line):
+            continue
+        cells = [c.strip() for c in line.split('|')]
+        cells = [c for c in cells if c]
+        if cells:
+            header_row = ' | '.join(cells)
+            break
+
     rows = []
     for line in content.split('\n'):
         line = line.strip()
@@ -243,6 +259,9 @@ def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
                 break
         if matched_kw:
             compressed = ' | '.join(cells)
+            # 附加表头行，让 LLM 能看到年份列标签
+            if header_row and header_row != compressed:
+                compressed = f"{header_row} ; {compressed}"
             # 附加关联计算指标标签，提高检索召回率
             tags = _ROW_METRIC_TAGS.get(matched_kw, "")
             if tags:
