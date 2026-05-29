@@ -202,10 +202,10 @@ def _tables_to_markdown(tables) -> str:
 
 
 def _is_table_extraction_valid(tables) -> bool:
-    """校验 PyMuPDF 提取的表格质量（页面级别，任意表格有效即通过）。
+    """校验 PyMuPDF 提取的表格质量（页面级别，所有表格都合格才通过）。
 
-    逐表检查：如果某个 table 中超过 30% 的 cell 含换行符，判定该 table 结构损坏。
-    只要页面中有一个有效 table，就返回 True。
+    逐表检查：如果某个 table 中超过 20% 的 cell 含换行符，判定该 table 结构损坏。
+    任意一个 table 不合格，整页回退到原始文本（避免坏 table 污染数据）。
     """
     for tab in tables:
         total_cells = 0
@@ -217,10 +217,10 @@ def _is_table_extraction_valid(tables) -> bool:
                         total_cells += 1
                         if '\n' in str(cell):
                             newline_cells += 1
-        # 如果没有 cell 或换行比例低于 30%，认为该 table 有效
-        if total_cells == 0 or (newline_cells / total_cells) < 0.3:
-            return True
-    return False
+        # 如果换行比例超过 20%，认为该 table 结构损坏
+        if total_cells > 0 and (newline_cells / total_cells) >= 0.2:
+            return False
+    return True
 
 
 def _is_pymupdf_extraction_good(page_text: str) -> bool:
