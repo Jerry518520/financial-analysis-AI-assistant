@@ -87,26 +87,36 @@ def _is_suspected_table_page(page) -> bool:
     """
     text = _get_page_text(page)
 
-    # 1. 关键词列表 (中英文)
+    # 1. 关键词列表 (中英文，覆盖常见财报表格)
     table_keywords = [
+        # 英文 — 三表 + 关键科目
         "Consolidated Balance Sheet", "Consolidated Income Statement", "Cash Flow",
+        "Balance Sheet", "Income Statement", "Statement of Financial Position",
+        "Statement of Operations", "Statement of Comprehensive Income",
+        "Assets", "Liabilities", "Equity", "Revenue", "Cost", "Profit",
+        "Operating", "Investing", "Financing", "Depreciation", "Amortization",
+        "Accounts Receivable", "Accounts Payable", "Inventories", "Goodwill",
+        "Intangible", "Provision", "Impairment", "Dividend", "Earnings",
+        # 中文 — 三表 + 关键科目
         "合并资产负债表", "合并利润表", "合并现金流量表", "主要财务指标",
-        "资产", "负债", "权益", "收入", "费用", "Assets", "Liabilities", "Equity", "Revenue"
+        "资产负债表", "利润表", "现金流量表", "所有者权益变动表",
+        "资产", "负债", "权益", "收入", "费用", "成本", "利润", "现金",
+        "应收", "应付", "存货", "固定资产", "无形资产", "商誉",
+        "减值", "折旧", "摊销", "分红", "股利", "营业收入", "营业成本",
     ]
-    
+
     has_keyword = any(kw in text for kw in table_keywords)
-    
+
     # 2. 数字密度检测
-    # 统计数字字符在总字符中的占比，或者统计连续数字串的数量
-    # 简单策略：如果页面中有超过 15 个独立的数字串（长度>1），且包含关键词，则大概率是表格
     # 匹配像 1,234.56 或 2023 这样的数字
     digit_sequences = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b', text)
     valid_digits = [d for d in digit_sequences if len(d) > 1]
-    
-    # 阈值可以调整
-    if has_keyword and len(valid_digits) > 15:
+    has_enough_digits = len(valid_digits) > 15
+
+    # OR 逻辑：有关键词 或 数字密度足够高，都可能是表格页
+    if has_keyword or has_enough_digits:
         return True
-        
+
     return False
 
 
@@ -138,7 +148,7 @@ def _extract_table_with_pymupdf(page) -> str:
         tables = page.find_tables(
             vertical_strategy='text',
             horizontal_strategy='text',
-            snap_tolerance=3,
+            snap_tolerance=5,
             join_tolerance=3,
         )
         if tables.tables:
@@ -160,9 +170,10 @@ def _extract_table_with_pymupdf(page) -> str:
                 continue
             has_chinese = bool(re.search(r'[\u4e00-\u9fff]', line))
             has_number = bool(re.search(r'\d', line))
-            if has_chinese and has_number:
+            # \u653e\u5bbd\uff1a\u6709\u4e2d\u6587\u6216\u6709\u6570\u5b57\u5373\u53ef\uff08\u7eaf\u82f1\u6587/\u7eaf\u6570\u5b57\u884c\u4e0d\u518d\u4e22\u5f03\uff09
+            if has_chinese or has_number:
                 formatted_lines.append(line)
-        if len(formatted_lines) > 5:
+        if len(formatted_lines) > 3:
             return "\n".join(formatted_lines)
 
     # ---------- 4. 兜底 ----------
@@ -212,8 +223,8 @@ def _is_pymupdf_extraction_good(page_text: str) -> bool:
     # 检查是否有合理的行数（表格应该有多行）
     line_count = len([l for l in page_text.split('\n') if l.strip()])
     
-    # 质量标准：有财务关键词 + 数字密度 > 3% + 行数 > 5
-    return has_financial_kw and digit_ratio > 0.03 and line_count > 5
+    # 质量标准：有财务关键词 + 数字密度 > 1.5% + 行数 > 3
+    return has_financial_kw and digit_ratio > 0.015 and line_count > 3
 
 def get_cache_path(file_content: bytes) -> str:
     # 简单的哈希缓存，避免重复解析同一文件
@@ -255,7 +266,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     tables = page.find_tables(
                         vertical_strategy='text',
                         horizontal_strategy='text',
-                        snap_tolerance=3,
+                        snap_tolerance=5,
                         join_tolerance=3,
                     )
 
@@ -280,7 +291,7 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     text = _get_page_text(page)
                     # 检测页面是否包含图片/图表
                     images = page.get_images()
-                    if images and len(text.strip()) < 200:
+                    if images and len(text.strip()) < 50:
                         # 图片页面文本很少，标记需要 LlamaParse 处理
                         image_pages_indices.append(i)
                         text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
@@ -360,6 +371,12 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                             if idx < len(target_indices):
                                 original_page_idx = target_indices[idx]
                                 llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
+                            else:
+                                # LlamaParse 返回多于输入页数时（大表格拆分），追加到最后一个目标页
+                                last_page_idx = target_indices[-1]
+                                if last_page_idx in llama_pages_content:
+                                    llama_pages_content[last_page_idx] += f"\n{result_doc.text}\n"
+                                    print(f"📎 LlamaParse 多余文档 #{idx+1} 追加到 Page {last_page_idx+1}")
                         
                         # 【修复】如果 LlamaParse 返回的文档数量不足，剩余页面 fallback 到 PyMuPDF
                         if len(documents) < len(target_indices):

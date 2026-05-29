@@ -608,15 +608,16 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 
         # 多查询扩展：用同义词补充查询，提高召回率
-        # 【修复】扩展结果施加分数衰减（0.85），防止关键词堆砌查询（如"营业收入 营业总收入"）
+        # 【修复】扩展结果施加距离惩罚（1.15），防止关键词堆砌查询（如"营业收入 营业总收入"）
         # 因词频优势压过主查询的精确匹配。主查询结果始终优先于扩展结果。
+        # FAISS L2 距离：分数越大越不相似，因此乘以 >1 的系数让扩展结果排名更差。
         expansions = _expand_query(question)
         if expansions:
             extra_query = " ".join(expansions[:5])  # 最多 5 个补充词
             print(f"🔄 查询扩展: {extra_query}")
             extra_results = vector_store.similarity_search_with_score(extra_query, k=top_k + 3)
             # 合并结果，去重（按 doc page_content 去重），扩展结果分数衰减
-            EXPANSION_SCORE_DECAY = 0.85
+            EXPANSION_SCORE_DECAY = 1.15
             seen_contents = {doc.page_content for doc, _ in docs_and_scores}
             for doc, score in extra_results:
                 if doc.page_content not in seen_contents:
