@@ -135,10 +135,12 @@ def _extract_table_with_pymupdf(page) -> str:
     # ---------- 1. 尝试有边框表格 ----------
     try:
         tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
-        if tables.tables:
+        if tables.tables and _is_table_extraction_valid(tables.tables):
             result = _tables_to_markdown(tables.tables)
             if result and len(result) > len(text) * 0.3:
                 return result
+        elif tables.tables:
+            print(f"⚠️ 有边框表格质量不合格（cell 含换行），跳过")
     except Exception as e:
         print(f"⚠️ PyMuPDF 有边框表格提取失败: {e}")
 
@@ -151,11 +153,13 @@ def _extract_table_with_pymupdf(page) -> str:
             snap_tolerance=5,
             join_tolerance=3,
         )
-        if tables.tables:
+        if tables.tables and _is_table_extraction_valid(tables.tables):
             result = _tables_to_markdown(tables.tables)
             if result and len(result) > len(text) * 0.3:
                 print(f"✅ 通过 text 策略提取到无边框表格 ({len(result)} 字符)")
                 return result
+        elif tables.tables:
+            print(f"⚠️ 无边框表格质量不合格（cell 含换行），跳过")
     except Exception as e:
         print(f"⚠️ PyMuPDF 无边框表格提取失败: {e}")
 
@@ -195,6 +199,21 @@ def _tables_to_markdown(tables) -> str:
             rows.insert(1, separator)
             table_texts.append("\n".join(rows))
     return "\n\n".join(table_texts) if table_texts else ""
+
+
+def _is_table_extraction_valid(tables) -> bool:
+    """校验 PyMuPDF 提取的表格质量。
+
+    如果 cell 中包含换行符，说明多个指标被错误挤入同一行（常见于无边框竖排表格），
+    此时表格结构不可靠，应回退到原始文本。
+    """
+    for tab in tables:
+        for row in tab.extract():
+            if row:
+                for cell in row:
+                    if cell and '\n' in str(cell):
+                        return False
+    return True
 
 
 def _is_pymupdf_extraction_good(page_text: str) -> bool:
@@ -270,9 +289,9 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                         join_tolerance=3,
                     )
 
-                # 如果发现表格，且表格面积看起来不是误判
+                # 如果发现表格，且表格面积看起来不是误判，且结构质量合格
                 has_valid_table = False
-                if tables.tables:
+                if tables.tables and _is_table_extraction_valid(tables.tables):
                     for tab in tables.tables:
                         if len(tab.cells) > 4:
                             has_valid_table = True
