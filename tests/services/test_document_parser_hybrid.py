@@ -32,14 +32,17 @@ class TestHybridParser(unittest.TestCase):
         mock_tables1 = MagicMock()
         mock_tables1.tables = [table1]
         page1.find_tables.return_value = mock_tables1
-        page1.get_text.return_value = "Page 1 Text"
-        
+        # _get_page_text 调用 get_text("html") 后用 regex 提取，需返回 HTML 格式
+        page1.get_text.return_value = "<p>Page 1 Text</p>"
+        page1.get_images.return_value = []  # 无图片，避免图片检测逻辑误触发
+
         # Page 2: No table
         page2 = MagicMock()
         mock_tables2 = MagicMock()
         mock_tables2.tables = []
         page2.find_tables.return_value = mock_tables2
-        page2.get_text.return_value = "Page 2 Text"
+        page2.get_text.return_value = "<p>Page 2 Text</p>"
+        page2.get_images.return_value = []  # 无图片
         
         # Setup iteration
         mock_doc.__iter__.return_value = iter([page1, page2])
