@@ -27,6 +27,7 @@ from financial_report_ai_assistant.core.agent import run_agent_query, generate_r
 from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, clear_pending_state, RAG_NOT_FOUND, RAG_INDEX_BUILDING
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
+from financial_report_ai_assistant.api.utils import extract_cited_pages
 import threading
 
 app = FastAPI(title="AI 财报分析助手")
@@ -185,10 +186,12 @@ async def chat_with_report(request: ChatRequest):
         recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
         print(f"[CHAT] 推荐问题: {recommendations}")
 
-        # 只展示 LLM 实际引用的页码，而非所有检索到的页面
-        # 兜底：如果 LLM 回答中未提取到页码，使用向量检索的来源页
-        cited_pages = _extract_cited_pages(answer)
-        merged_pages = cited_pages if cited_pages else source_pages
+        # 合并 LLM 引用页码与 RAG 检索页码
+        # 优先展示 LLM 引用的页，同时保留 RAG 检索到但 LLM 未显式引用的页
+        # 过滤掉 LLM 幻觉的页码（不在 source_pages 中的引用）
+        cited_pages = extract_cited_pages(answer)
+        valid_cited = [p for p in cited_pages if p in source_pages]
+        merged_pages = list(dict.fromkeys(valid_cited + source_pages))
 
         return {
             "answer": answer,
@@ -238,10 +241,8 @@ def _build_enhanced_context(current_context: str, history: list, current_questio
 
 
 def _extract_cited_pages(text: str) -> list:
-    """从 LLM 回答中提取引用的页码（如"根据第3页数据"）"""
-    return list(dict.fromkeys(
-        int(m) for m in re.findall(r'第(\d+)页', text)
-    ))
+    """从 LLM 回答中提取引用的页码（兼容旧调用）"""
+    return extract_cited_pages(text)
 
 
 @app.get("/highlight")

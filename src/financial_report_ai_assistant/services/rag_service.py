@@ -128,7 +128,8 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
                 # 【关键修复】提取关键财务指标行作为独立 chunk，提高检索精度
                 # 整页表格的 embedding 容易被大量数字和空单元格稀释语义，
                 # 独立的关键行 chunk 能让"资产总额"等词获得更高的检索相似度
-                key_rows = _extract_key_table_rows(compressed_content, page_num)
+                # 【修复】传入未压缩 content 用于表头提取，保持列对齐
+                key_rows = _extract_key_table_rows(content, page_num)
                 for row_text in key_rows:
                     documents.append(Document(page_content=row_text, metadata={"page_num": page_num, "type": "table_row"}))
                     PAGE_NUM_MAP[doc_index] = page_num
@@ -210,8 +211,10 @@ def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
     """从表格中提取包含关键财务指标的行作为独立 chunk，提高检索精度。
 
     每个关键行前面会附加：
-    1. 表头行（年份列标签，如"2025年 | 2024年"），确保 LLM 能正确归属数值
+    1. 表头行（年份列标签，如"2025年 | 2024年"），保持原始列对齐，确保 LLM 能正确归属数值
     2. 关联计算指标标签，确保用户查询"存货周转率"时，"存货"等行能被高相似度召回
+
+    注意：content 应为未压缩的原始表格文本，以保持表头与数据行的列对齐。
     """
     key_indicators = [
         "资产总额", "资产总计", "负债总额", "负债总计",
@@ -259,9 +262,9 @@ def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
                 break
         if matched_kw:
             compressed = ' | '.join(cells)
-            # 附加表头行，让 LLM 能看到年份列标签
+            # 附加表头行，保持列对齐，让 LLM 能看到年份列标签
             if header_row and header_row != compressed:
-                compressed = f"{header_row} ; {compressed}"
+                compressed = f"{header_row} | {compressed}"
             # 附加关联计算指标标签，提高检索召回率
             tags = _ROW_METRIC_TAGS.get(matched_kw, "")
             if tags:

@@ -9,13 +9,13 @@ import asyncio
 import json
 import re
 
+from financial_report_ai_assistant.api.utils import extract_cited_pages
+
 router = APIRouter()
 
 def _extract_cited_pages(text: str) -> list:
-    """从 LLM 回答中提取引用的页码（如"根据第3页数据"或"（第3页）"）"""
-    return list(dict.fromkeys(
-        int(m) for m in re.findall(r'第(\d+)页', text)
-    ))
+    """从 LLM 回答中提取引用的页码（兼容旧调用）"""
+    return extract_cited_pages(text)
 
 class AnalysisRequest(BaseModel):
     focus: str = "general" # general, financial, risk, business
@@ -121,9 +121,10 @@ async def generate_report_summary(request: AnalysisRequest):
     try:
         print("💡 正在生成摘要...")
         summary = await asyncio.to_thread(chain.invoke, {"context": full_context, "focus_hint": focus_hint})
-        # 只展示 LLM 实际引用的页码，兜底用向量检索的来源页
-        cited = _extract_cited_pages(summary)
-        source_pages = cited if cited else sorted(all_source_pages)
+        # 合并 LLM 引用页码与 RAG 检索页码，过滤幻觉页码
+        cited = extract_cited_pages(summary)
+        valid_cited = [p for p in cited if p in all_source_pages]
+        source_pages = sorted(set(valid_cited) | all_source_pages) if valid_cited else sorted(all_source_pages)
         return {"summary": summary, "source_pages": source_pages}
     except Exception as e:
         print(f"❌ 摘要生成失败: {e}")
