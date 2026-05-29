@@ -121,10 +121,11 @@ async def generate_report_summary(request: AnalysisRequest):
     try:
         print("💡 正在生成摘要...")
         summary = await asyncio.to_thread(chain.invoke, {"context": full_context, "focus_hint": focus_hint})
-        # 合并 LLM 引用页码与 RAG 检索页码，过滤幻觉页码
+        # 只展示 LLM 实际引用的页码，过滤幻觉页码
+        # 兜底：如果 LLM 回答中未提取到页码，使用向量检索的来源页
         cited = extract_cited_pages(summary)
         valid_cited = [p for p in cited if p in all_source_pages]
-        source_pages = sorted(set(valid_cited) | all_source_pages) if valid_cited else sorted(all_source_pages)
+        source_pages = sorted(valid_cited) if valid_cited else sorted(all_source_pages)
         return {"summary": summary, "source_pages": source_pages}
     except Exception as e:
         print(f"❌ 摘要生成失败: {e}")

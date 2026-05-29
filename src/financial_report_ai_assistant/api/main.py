@@ -186,12 +186,11 @@ async def chat_with_report(request: ChatRequest):
         recommendations = await asyncio.to_thread(generate_recommendations, request.question, answer, enhanced_context)
         print(f"[CHAT] 推荐问题: {recommendations}")
 
-        # 合并 LLM 引用页码与 RAG 检索页码
-        # 优先展示 LLM 引用的页，同时保留 RAG 检索到但 LLM 未显式引用的页
-        # 过滤掉 LLM 幻觉的页码（不在 source_pages 中的引用）
+        # 只展示 LLM 实际引用的页码，过滤幻觉页码（不在 RAG 检索结果中的引用）
+        # 兜底：如果 LLM 回答中未提取到页码，使用向量检索的来源页
         cited_pages = extract_cited_pages(answer)
         valid_cited = [p for p in cited_pages if p in source_pages]
-        merged_pages = list(dict.fromkeys(valid_cited + source_pages))
+        merged_pages = valid_cited if valid_cited else source_pages
 
         return {
             "answer": answer,
