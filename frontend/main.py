@@ -2,12 +2,12 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import requests
+import pandas as pd
+import plotly.graph_objects as go
 import os
 import re
 import threading
 import time
-import plotly.graph_objects as go
-import markdown as _md_lib
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
@@ -66,6 +66,7 @@ p, span, div, li, td, th {
 }
 
 /* ===== Markdown 列表样式强制覆盖 ===== */
+/* 针对聊天消息内的所有列表（包括动态渲染的） */
 [data-testid="stChatMessage"] ul,
 [data-testid="stChatMessage"] ol,
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] ul,
@@ -97,71 +98,6 @@ p, span, div, li, td, th {
 }
 
 /* ===== Streamlit 原生组件样式覆盖 ===== */
-
-/* Selectbox 下拉菜单 */
-[data-testid="stSelectbox"] {
-    background: #1a1d29 !important;
-    border-radius: 8px !important;
-}
-[data-testid="stSelectbox"] > div {
-    background: #1a1d29 !important;
-}
-[data-testid="stSelectbox"] > div > div {
-    background: #1a1d29 !important;
-    border: 1px solid rgba(0, 212, 170, 0.2) !important;
-    border-radius: 8px !important;
-    color: #e2e8f0 !important;
-}
-[data-testid="stSelectbox"] label {
-    color: #00d4aa !important;
-}
-[data-testid="stSelectbox"] [data-baseweb="select"] {
-    background: #1a1d29 !important;
-}
-[data-testid="stSelectbox"] [data-baseweb="select"] > div {
-    background: #1a1d29 !important;
-    color: #e2e8f0 !important;
-}
-[data-testid="stSelectbox"] [data-baseweb="popover"] {
-    background: #1a1d29 !important;
-}
-[data-testid="stSelectbox"] [data-baseweb="popover"] [data-baseweb="menu"] {
-    background: #1a1d29 !important;
-}
-[data-testid="stSelectbox"] [role="option"] {
-    background: #1a1d29 !important;
-    color: #e2e8f0 !important;
-}
-[data-testid="stSelectbox"] [role="option"]:hover {
-    background: #262b40 !important;
-    color: #00d4aa !important;
-}
-
-/* BaseWeb 下拉菜单（portal 渲染，需全局覆盖） */
-[data-baseweb="popover"],
-[data-baseweb="menu"],
-[data-baseweb="select"] ul,
-div[data-baseweb="popover"] div[role="listbox"],
-div[data-baseweb="popover"] div[role="option"],
-div[data-baseweb="popover"] li,
-div[data-baseweb="popover"] ul {
-    background: #1a1d29 !important;
-    background-color: #1a1d29 !important;
-    color: #e2e8f0 !important;
-    border: 1px solid rgba(0, 212, 170, 0.2) !important;
-}
-div[data-baseweb="popover"] div[role="option"]:hover,
-div[data-baseweb="popover"] li:hover,
-div[data-baseweb="popover"] ul li:hover {
-    background: #262b40 !important;
-    background-color: #262b40 !important;
-    color: #00d4aa !important;
-}
-div[data-baseweb="popover"] div[role="option"][aria-selected="true"] {
-    background: #262b40 !important;
-    background-color: #262b40 !important;
-    color: #00d4aa !important;
-}
 
 /* 输入框 / 文件上传 */
 [data-testid="stFileUploader"] {
@@ -303,6 +239,71 @@ div[data-baseweb="popover"] div[role="option"][aria-selected="true"] {
     background: #141620 !important;
 }
 
+/* Selectbox 下拉菜单 */
+[data-testid="stSelectbox"] {
+    background: #1a1d29 !important;
+    border-radius: 8px !important;
+}
+[data-testid="stSelectbox"] > div {
+    background: #1a1d29 !important;
+}
+[data-testid="stSelectbox"] > div > div {
+    background: #1a1d29 !important;
+    border: 1px solid rgba(0, 212, 170, 0.2) !important;
+    border-radius: 8px !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stSelectbox"] label {
+    color: #00d4aa !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] {
+    background: #1a1d29 !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+    background: #1a1d29 !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="popover"] {
+    background: #1a1d29 !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="popover"] [data-baseweb="menu"] {
+    background: #1a1d29 !important;
+}
+[data-testid="stSelectbox"] [role="option"] {
+    background: #1a1d29 !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stSelectbox"] [role="option"]:hover {
+    background: #262b40 !important;
+    color: #00d4aa !important;
+}
+
+/* BaseWeb 下拉菜单（portal 渲染，需全局覆盖） */
+[data-baseweb="popover"],
+[data-baseweb="menu"],
+[data-baseweb="select"] ul,
+div[data-baseweb="popover"] div[role="listbox"],
+div[data-baseweb="popover"] div[role="option"],
+div[data-baseweb="popover"] li,
+div[data-baseweb="popover"] ul {
+    background: #1a1d29 !important;
+    background-color: #1a1d29 !important;
+    color: #e2e8f0 !important;
+    border: 1px solid rgba(0, 212, 170, 0.2) !important;
+}
+div[data-baseweb="popover"] div[role="option"]:hover,
+div[data-baseweb="popover"] li:hover,
+div[data-baseweb="popover"] ul li:hover {
+    background: #262b40 !important;
+    background-color: #262b40 !important;
+    color: #00d4aa !important;
+}
+div[data-baseweb="popover"] div[role="option"][aria-selected="true"] {
+    background: #262b40 !important;
+    background-color: #262b40 !important;
+    color: #00d4aa !important;
+}
+
 /* ===== 数据表格 ===== */
 [data-testid="stDataFrame"] {
     background: #1a1d29 !important;
@@ -315,116 +316,263 @@ div[data-baseweb="popover"] div[role="option"][aria-selected="true"] {
 [data-testid="stDataFrame"] th {
     background: #141620 !important;
     color: #00d4aa !important;
-}
-
-/* ===== 侧边栏 ===== */
-[data-testid="stSidebar"] {
-    background: #0a0d14 !important;
-    border-right: 1px solid rgba(0, 212, 170, 0.1) !important;
-}
-[data-testid="stSidebar"] .stMarkdown h1,
-[data-testid="stSidebar"] .stMarkdown h2,
-[data-testid="stSidebar"] .stMarkdown h3 {
-    color: #00d4aa !important;
-}
-[data-testid="stSidebar"] .stMarkdown p {
-    color: #94a3b8 !important;
-}
-
-/* ===== 进度条 ===== */
-[data-testid="stProgressBar"] > div {
-    background: #1a1d29 !important;
-}
-[data-testid="stProgressBar"] > div > div {
-    background: linear-gradient(90deg, #00d4aa, #00b894) !important;
-}
-
-/* ===== Markdown 表格 ===== */
-.stMarkdown table,
-.stMarkdown th,
-.stMarkdown td {
-    background: #1a1d29 !important;
-    color: #cbd5e1 !important;
-    border-color: rgba(255,255,255,0.08) !important;
-}
-.stMarkdown th {
-    background: #141620 !important;
-    color: #00d4aa !important;
     font-weight: 600 !important;
+    border-bottom: 1px solid rgba(0, 212, 170, 0.2) !important;
 }
-.stMarkdown tr:hover td {
-    background: #1e2235 !important;
+[data-testid="stDataFrame"] td {
+    border-bottom: 1px solid rgba(255,255,255,0.03) !important;
+}
+[data-testid="stDataFrame"] tr:hover td {
+    background: rgba(0, 212, 170, 0.05) !important;
 }
 
-/* ===== 分隔线 ===== */
-hr {
-    border-color: rgba(0, 212, 170, 0.15) !important;
+/* ===== Divider ===== */
+hr, [data-testid="stDivider"] {
+    border-color: rgba(0, 212, 170, 0.1) !important;
+    margin: 1.5rem 0 !important;
 }
 
-/* ===== Tabs ===== */
-.stTabs [data-baseweb="tab-list"] {
-    background: #0f1117 !important;
-    border-radius: 8px !important;
-}
-.stTabs [data-baseweb="tab"] {
-    color: #8892a4 !important;
-    background: transparent !important;
-}
-.stTabs [aria-selected="true"] {
+/* ===== Spinner ===== */
+[aria-busy="true"] {
     color: #00d4aa !important;
-    background: #1a1d29 !important;
-    border-bottom-color: #00d4aa !important;
 }
+
+/* ===== 列间距优化 ===== */
+[data-testid="stHorizontalBlock"] {
+    gap: 2rem;
+}
+
+/* ===== 滚动条美化 ===== */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #0f1117;
+}
+::-webkit-scrollbar-thumb {
+    background: #2a2d3a;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3a3d4a;
+}
+
+/* ===== 自定义工具类 ===== */
+.metric-card {
+    background: #1a1d29;
+    border: 1px solid rgba(0, 212, 170, 0.1);
+    border-radius: 12px;
+    padding: 1.2rem;
+    margin-bottom: 0.8rem;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+.metric-card:hover {
+    border-color: rgba(0, 212, 170, 0.3);
+    box-shadow: 0 0 20px rgba(0, 212, 170, 0.05);
+}
+
+.gold-accent {
+    color: #f0b429 !important;
+}
+
+.dim-text {
+    color: #475569 !important;
+    font-size: 0.85rem;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# 辅助函数：提取来源页码
+# 自动滚动 — components.html 注入 JS（iframe 内，需 parent.document）
+# 方案：MutationObserver（5秒超时）+ debounce 500ms，防抽动且确保滚到底
 # ============================================================
-def _extract_source_pages(msg):
-    """从 assistant 消息中提取所有来源页码"""
-    return sorted(set(re.findall(r'第(\d+)页', msg.get("content", ""))))
+def _auto_scroll():
+    """在回答渲染完成后，滚动到页面底部。
+    
+    用 MutationObserver 监听 Streamlit 渲染完成，配合 debounce 防止抽动。
+    Observer 5秒后自动断开。
+    """
+    components.html("""
+<script>
+(function() {
+    var doc = parent.document;
+    var timer = null;
+    
+    function scrollToBottom() {
+        var msgs = doc.querySelectorAll('[data-testid="stChatMessage"]');
+        if (msgs.length === 0) return;
+        var last = msgs[msgs.length - 1];
+        // 用 scrollTop 直接控制滚动容器，比 scrollIntoView 更可控
+        var el = last;
+        while (el && el !== doc.body) {
+            if (el.scrollHeight > el.clientHeight) {
+                el.scrollTop = el.scrollHeight;
+            }
+            el = el.parentElement;
+        }
+    }
+    
+    function debouncedScroll() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(scrollToBottom, 500);
+    }
+    
+    // 延迟启动观察（等当前渲染完成后再监听后续变化）
+    setTimeout(function() {
+        scrollToBottom();
+        
+        var observer = new MutationObserver(debouncedScroll);
+        observer.observe(doc.body, { childList: true, subtree: true });
+        
+        // 5秒后停止观察 + 最后滚一次
+        setTimeout(function() {
+            observer.disconnect();
+            if (timer) clearTimeout(timer);
+            scrollToBottom();
+        }, 5000);
+    }, 300);
+})();
+</script>
+""", height=0)
 
 
 # ============================================================
-# 渲染消息内容（Markdown → HTML）
+# 业务逻辑函数（不变）
 # ============================================================
-def _render_message_content(msg):
-    """将 Markdown 消息内容渲染为带格式的 HTML"""
-    content = msg.get("content", "")
 
-    if msg.get("role") == "assistant":
-        # 提取参考来源（如果有）
-        source_pages = msg.get("source_pages", [])
-        source_html = ""
-        if source_pages:
-            pages_str = ", ".join([f"第{p}页" for p in source_pages])
-            source_html = f"""
-            <div style="
-                margin-top: 0.6rem;
-                padding-top: 0.6rem;
-                border-top: 1px solid rgba(0, 212, 170, 0.1);
-                font-size: 0.78rem;
-                color: #64748b;
-            ">
-                📎 参考来源: {pages_str}
-            </div>
-            """
+def get_recommended_questions(user_question):
+    """根据用户问题推荐相关问题"""
+    question_lower = user_question.lower()
 
-        # Markdown 转 HTML（修复表格和列表渲染）
-        html_content = _md_lib.markdown(content, extensions=['tables', 'fenced_code'])
-        return f"""
-        <div style="
-            line-height: 1.85;
-            color: #e2e8f0;
-        ">
-            {html_content}
-            {source_html}
-        </div>
-        """
+    recommendations = {
+        # 基础数据
+        "营收": ["净利润是多少？", "毛利率是多少？", "营收同比增长多少？"],
+        "收入": ["净利润是多少？", "毛利率是多少？", "营收同比增长多少？"],
+        "净利润": ["毛利率是多少？", "ROE是多少？", "净利润同比增长多少？"],
+        "资产": ["负债是多少？", "资产负债率是多少？", "现金流是多少？"],
+        # 盈利能力
+        "利润": ["毛利率是多少？", "ROE是多少？", "净利率是多少？"],
+        "毛利率": ["净利率是多少？", "ROE是多少？", "公司的盈利能力强吗？"],
+        "净利率": ["毛利率是多少？", "ROE是多少？", "EPS是多少？"],
+        "ROE": ["净利率是多少？", "EPS是多少？", "公司的盈利能力强吗？"],
+        "EPS": ["PE是多少？", "ROE是多少？", "每股收益增长了多少？"],
+        "PE": ["EPS是多少？", "股价是多少？", "估值合理吗？"],
+        # 偿债能力
+        "负债": ["资产负债率是多少？", "公司的偿债能力如何？", "流动比率是多少？"],
+        "资产负债率": ["流动比率是多少？", "速动比率是多少？", "公司的偿债能力如何？"],
+        "流动比率": ["速动比率是多少？", "资产负债率是多少？", "偿债能力如何？"],
+        "速动比率": ["流动比率是多少？", "资产负债率是多少？", "偿债能力如何？"],
+        # 运营能力
+        "周转": ["资产周转率是多少？", "存货周转率是多少？", "运营效率如何？"],
+        "存货": ["存货周转率是多少？", "资产周转率是多少？", "库存管理如何？"],
+        # 成长能力
+        "增长": ["净利润同比增长多少？", "营收同比增长多少？", "公司的发展能力如何？"],
+        "同比": ["净利润同比增长多少？", "营收同比增长多少？", "分析一下公司的成长趋势"],
+        "趋势": ["分析一下公司的成长趋势", "营收同比增长了多少？", "未来发展前景如何？"],
+        # 综合分析
+        "风险": ["经营风险有哪些？", "财务风险有哪些？", "公司面临哪些主要风险？"],
+        "摘要": ["公司的盈利能力强吗？", "公司面临哪些主要风险？", "未来发展前景如何？"],
+        "行业": ["与行业平均水平对比如何？", "公司在行业中地位如何？", "竞争优势是什么？"],
+        "对比": ["与行业平均水平对比如何？", "公司在行业中地位如何？"],
+    }
+
+    for key, questions in recommendations.items():
+        if key in question_lower:
+            return questions
+
+    return ["公司的盈利能力强吗？", "毛利率是多少？", "净利润同比增长多少？"]
+
+
+def call_chat_api(prompt, history=None):
+    """统一的聊天 API 调用逻辑
+    
+    Args:
+        prompt: 当前问题
+        history: 历史对话记录 [(question, answer), ...]
+    """
+    payload = {
+        "question": prompt,
+        "conversation_history": history or [],
+        "pdf_hash": st.session_state.get("current_pdf_hash", "")
+    }
+    res = requests.post(f"{API_URL}/chat", json=payload, timeout=120)
+
+    if res.status_code == 200:
+        data = res.json()
+        ai_msg = data.get("answer", "") or ""
+        source_pages = data.get("source_pages", [data.get("source_page", None)])
+        # 确保列表中的 None 被过滤掉
+        source_pages = [p for p in source_pages if p is not None]
+
+        # 文档一致性校验：检测后端索引是否与当前上传的文档一致
+        response_hash = data.get("pdf_hash", "")
+        expected_hash = st.session_state.get("current_pdf_hash", "")
+        if expected_hash and response_hash and response_hash != expected_hash:
+            ai_msg = "⚠️ **文档不一致警告**：后端索引与当前上传的文档不匹配，以下回答可能来自其他文档。\n\n" + ai_msg
+
+        if not ai_msg.strip():
+            ai_msg = "⚠️ 后端返回了空回答，请检查服务器日志或尝试重新提问。"
+        # 优先使用后端返回的推荐问题，如果没有则 fallback 到本地规则
+        recommendations = data.get("recommendations", None)
+        if recommendations and len(recommendations) > 0:
+            recommended = recommendations
+        else:
+            recommended = get_recommended_questions(prompt)
+        return ai_msg, source_pages, recommended
     else:
-        return content
+        try:
+            error_detail = res.json().get("error", "未知错误")
+        except Exception:
+            error_detail = f"HTTP {res.status_code}"
+        return f"❌ 服务器错误：{error_detail}", [], None
+
+
+def _clean_ai_message(text):
+    """清理 AI 输出中的 HTML 标签残留（如 <br>、<br/>、<p> 等）"""
+    # 将 <br>、<br/>、<br /> 替换为换行符
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    # 将 </p>、<p> 替换为换行符（保留内容）
+    text = re.sub(r'</?p>', '\n', text)
+    # 移除其他残留 HTML 标签
+    text = re.sub(r'<[^>]+>', '', text)
+    return text
+
+
+def _render_source_images(source_pages, btn_key):
+    """渲染溯源按钮，点击后展开来源页图片（支持多页），展开后可收起"""
+    if not source_pages:
+        return
+
+    if len(source_pages) == 1:
+        label = f"📄 查看来源（第 {source_pages[0]} 页）"
+    else:
+        pages_str = "、".join(str(p) for p in source_pages)
+        label = f"📄 查看来源（第 {pages_str} 页）"
+
+    is_expanded = st.session_state.get("_expanded_source") == btn_key
+
+    if is_expanded:
+        # 已展开：显示"收起"按钮
+        if st.button("🔼 收起来源", key=f"{btn_key}_close", use_container_width=True):
+            st.session_state.pop("_expanded_source", None)
+            st.rerun()
+        for page in source_pages:
+            try:
+                # 服务端获取图片字节（避免 Docker 内部 URL 对浏览器不可达）
+                resp = requests.get(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", timeout=10)
+                if resp.status_code == 200:
+                    st.image(resp.content, caption=f"📄 来源：第 {page} 页")
+                else:
+                    st.caption(f"⚠️ 第 {page} 页溯源图片加载失败 (HTTP {resp.status_code})")
+            except Exception as e:
+                st.caption(f"⚠️ 第 {page} 页溯源图片加载失败: {e}")
+    else:
+        # 未展开：显示"查看来源"按钮
+        if st.button(label, key=btn_key):
+            st.session_state["_expanded_source"] = btn_key
+            st.rerun()
 
 
 def _render_recommended(rec_list, msg_idx):
@@ -457,7 +605,7 @@ def _render_radar_chart(radar_data: dict):
         "D": "#ffb74d", "E": "#ef5350",
     }
 
-    # ---- 1. Plotly 雷达图（带权重标注） ----
+    # ---- 1. Plotly 雷达图 ----
     categories = [f'{d["name"]}<br>({int(d.get("weight", 0)*100)}%)' for d in dims]
     values = [d["score"] for d in dims]
     categories_closed = categories + [categories[0]]
@@ -474,15 +622,8 @@ def _render_radar_chart(radar_data: dict):
     ))
     fig.update_layout(
         polar=dict(
-            radialaxis=dict(
-                visible=True, range=[0, 100],
-                tickfont=dict(size=10, color='#8892a4'),
-                gridcolor='rgba(255,255,255,0.08)',
-            ),
-            angularaxis=dict(
-                tickfont=dict(size=12, color='#e2e8f0'),
-                gridcolor='rgba(255,255,255,0.08)',
-            ),
+            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=10, color='#8892a4'), gridcolor='rgba(255,255,255,0.08)'),
+            angularaxis=dict(tickfont=dict(size=12, color='#e2e8f0'), gridcolor='rgba(255,255,255,0.08)'),
             bgcolor='rgba(0,0,0,0)',
         ),
         paper_bgcolor='rgba(0,0,0,0)',
@@ -502,26 +643,20 @@ def _render_radar_chart(radar_data: dict):
         z_colors = {"安全": "#00d4aa", "灰色": "#ffb74d", "危险": "#ef5350"}
         z_color = z_colors.get(z_zone, "#8892a4")
         z_html = (
-            f'<div style="text-align:center; margin-top:0.8rem; padding-top:0.8rem; '
-            f'border-top:1px solid rgba(255,255,255,0.06);">'
+            f'<div style="text-align:center; margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(255,255,255,0.06);">'
             f'<span style="font-size:11px; color:#8892a4; letter-spacing:1px;">ALTMAN Z-SCORE</span><br>'
             f'<span style="font-size:28px; font-weight:900; color:{z_color};">{z_val:.2f}</span>'
-            f'<span style="font-size:13px; color:{z_color}; margin-left:8px;">{z_zone}</span>'
-            f'</div>'
+            f'<span style="font-size:13px; color:{z_color}; margin-left:8px;">{z_zone}</span></div>'
         )
 
     st.markdown(
         f'<div style="text-align:center; margin-bottom:1rem;">'
         f'<span style="font-size:13px; color:#8892a4; letter-spacing:2px;">COMPOSITE SCORE</span><br>'
-        f'<span style="font-size:36px; font-weight:900; color:{comp_color};">'
-        f'{composite:.0f}<span style="font-size:16px; color:#8892a4;">/100</span></span>'
-        f'<span style="display:inline-block; width:44px; height:44px; border:2px solid {comp_color}; '
-        f'border-radius:8px; text-align:center; line-height:44px; font-size:24px; font-weight:900; '
-        f'color:{comp_color}; margin-left:12px; vertical-align:middle;">{composite_grade}</span>'
+        f'<span style="font-size:36px; font-weight:900; color:{comp_color};">{composite:.0f}<span style="font-size:16px; color:#8892a4;">/100</span></span>'
+        f'<span style="display:inline-block; width:44px; height:44px; border:2px solid {comp_color}; border-radius:8px; text-align:center; line-height:44px; font-size:24px; font-weight:900; color:{comp_color}; margin-left:12px; vertical-align:middle;">{composite_grade}</span>'
         f'<br><span style="font-size:13px; color:{comp_color};">{composite_label}</span>'
         f'<span style="font-size:12px; color:#8892a4; margin-left:8px;">{industry}</span>'
-        f'{z_html}'
-        f'</div>',
+        f'{z_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -542,11 +677,9 @@ def _render_radar_chart(radar_data: dict):
             d = dims[i + j]
             score = d["score"]
             grade = d.get("grade", "?")
-            label = d.get("label", "")
             weight = d.get("weight", 0)
             color = GRADE_COLORS.get(grade, "#8892a4")
             detail = d.get("detail", [])
-
             bench_lines = []
             for item in detail:
                 if item.get("benchmark") is not None and len(bench_lines) < 2:
@@ -554,27 +687,19 @@ def _render_radar_chart(radar_data: dict):
                     bv = _fmt_val(item["benchmark"], item["name"])
                     bench_lines.append(f'{item["name"]}: {cv} vs {bv}')
             bench_text = " | ".join(bench_lines) if bench_lines else ""
-
             with col:
                 bench_html = f'<div style="font-size:11px; color:#8892a4; margin-top:6px;">{bench_text}</div>' if bench_text else ''
                 st.markdown(
-                    f'<div style="border:1px solid rgba(255,255,255,0.08); border-radius:10px; '
-                    f'padding:0.8rem 1rem; margin-bottom:0.5rem;">'
+                    f'<div style="border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:0.8rem 1rem; margin-bottom:0.5rem;">'
                     f'<div style="display:flex; align-items:center; gap:0.8rem;">'
-                    f'<div style="width:44px; height:44px; border:2px solid {color}; border-radius:8px; '
-                    f'text-align:center; line-height:44px; font-size:20px; font-weight:900; color:{color}; '
-                    f'flex-shrink:0;">{grade}</div>'
+                    f'<div style="width:44px; height:44px; border:2px solid {color}; border-radius:8px; text-align:center; line-height:44px; font-size:20px; font-weight:900; color:{color}; flex-shrink:0;">{grade}</div>'
                     f'<div style="flex:1;">'
                     f'<div style="display:flex; justify-content:space-between; align-items:baseline;">'
                     f'<span style="font-weight:600; color:#e2e8f0;">{d["name"]}<span style="font-size:11px; color:#8892a4; margin-left:4px;">{int(weight*100)}%</span></span>'
-                    f'<span style="font-weight:700; color:{color};">{score:.1f}<span style="font-size:11px; color:#8892a4;">/100</span></span>'
-                    f'</div>'
+                    f'<span style="font-weight:700; color:{color};">{score:.1f}<span style="font-size:11px; color:#8892a4;">/100</span></span></div>'
                     f'<div style="height:5px; background:rgba(255,255,255,0.06); border-radius:3px; margin-top:4px;">'
-                    f'<div style="height:100%; width:{min(score,100)}%; background:{color}; border-radius:3px;"></div>'
-                    f'</div>'
-                    f'</div></div>'
-                    f'{bench_html}'
-                    f'</div>',
+                    f'<div style="height:100%; width:{min(score,100)}%; background:{color}; border-radius:3px;"></div></div>'
+                    f'</div></div>{bench_html}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -596,23 +721,23 @@ def _render_radar_chart(radar_data: dict):
 
 def _extract_history_for_api():
     """从历史消息中提取 (question, answer) 列表用于 API 调用
-
+    
     注意：只提取完整的问答对（user + assistant），排除当前未回答的问题
     """
     history = []
     messages = st.session_state.get("messages", [])
-
+    
     # 找到最后一个完整的问答对（确保有 user 和 assistant）
     # messages 格式：[user1, assistant1, user2, assistant2, ...]
     # 如果最后一条是 user（当前问题还没回答），则排除它
     n = len(messages)
     if n == 0:
         return history
-
+    
     # 如果最后一条是 user（没有对应的 assistant），则只取到前一条
     if messages[-1].get("role") == "user":
         n = n - 1
-
+    
     # 现在 n 是完整的长度（偶数），取所有完整的问答对
     for i in range(0, n, 2):
         if i + 1 < n:
@@ -622,88 +747,254 @@ def _extract_history_for_api():
                 # 截取回答前500字符，避免过长
                 answer = ai_msg.get("content", "")[:500]
                 history.append((user_msg.get("content", ""), answer))
-
+    
     # 只返回最近 5 轮（避免过长）
     return history[-5:]
+
+
+def _process_chat(prompt):
+    """处理一次对话：发送问题 → 渲染回答 → 追加历史消息 → 渲染溯源和推荐"""
+    st.session_state["_source_btn_counter"] = st.session_state.get("_source_btn_counter", 0) + 1
+    btn_key = f"source_new_{st.session_state['_source_btn_counter']}"
+
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+        _auto_scroll()  # 用户消息+AI思考状态已渲染，立刻滚到底
+        chat_result = {"ai_msg": None, "source_pages": [], "recommended": None, "error": None}
+
+        # 【关键修复】提取历史对话记录传递给后端
+        conversation_history = _extract_history_for_api()
+
+        def _call_api():
+            try:
+                ai_msg, source_pages, recommended = call_chat_api(prompt, conversation_history)
+                chat_result["ai_msg"] = ai_msg
+                chat_result["source_pages"] = source_pages
+                chat_result["recommended"] = recommended
+            except Exception as e:
+                chat_result["error"] = str(e)
+
+        t = threading.Thread(target=_call_api, daemon=True)
+        t.start()
+
+        steps = [
+            (10, "🔍 正在检索相关财报信息..."),
+            (30, "🔍 正在检索相关财报信息..."),
+            (50, "🧠 AI 正在分析财务数据..."),
+            (75, "🧠 AI 正在整理分析结论..."),
+            (90, "📝 正在生成回答..."),
+        ]
+        for pct, text in steps:
+            progress_bar.progress(pct, text=text)
+            t.join(timeout=15)
+            if not t.is_alive() or chat_result["error"]:
+                break
+
+        # 如果线程还在跑，继续等待（最多再等 120 秒）
+        if t.is_alive():
+            progress_text.markdown("⏳ Agent 深度分析中，请稍候...")
+            t.join(timeout=120)
+
+        if chat_result["error"]:
+            progress_bar.empty()
+            progress_text.empty()
+            st.error(f"❌ 请求失败：{chat_result['error']}")
+            return
+
+        ai_msg = chat_result["ai_msg"]
+        source_pages = chat_result["source_pages"]
+        recommended = chat_result["recommended"]
+
+        if ai_msg:
+            progress_bar.progress(100, text="✅ 回答完成！")
+            ai_msg = _clean_ai_message(ai_msg)
+            st.markdown(ai_msg)
+            msg_idx = len(st.session_state.messages)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": ai_msg,
+                "source_pages": source_pages,
+                "recommended": recommended,
+                "source_btn_key": btn_key,
+            })
+            _render_source_images(source_pages, btn_key)
+            _render_recommended(recommended, msg_idx)
+        else:
+            progress_bar.empty()
+            progress_text.empty()
+            # 线程超时：请求可能还在后端执行
+            if t.is_alive():
+                st.warning("⏳ 回答生成超时，Agent 仍在后台分析中。请稍后在聊天框中重新提问相同问题。")
+            else:
+                st.error("❌ 未收到有效回答，请重试。")
 
 
 # ============================================================
 # 页面布局
 # ============================================================
-st.set_page_config(
-    page_title="财报 AI 助手",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
 
-# 隐藏侧边栏 + 美化
+st.set_page_config(page_title="洞察者 AI", page_icon="📊", layout="wide")
+
+# 顶部标题区
 st.markdown("""
-    <style>
-        [data-testid="collapsedControl"] { display: none; }
-        section[data-testid="stSidebar"] { display: none; }
-    </style>
+<div style="margin-bottom: 1.5rem;">
+    <h1 style="margin-bottom: 0.2rem;">洞察者 AI</h1>
+    <p style="color: #475569; font-size: 0.95rem; margin: 0;">
+        基于 RAG + Agent 的智能财报分析助手 &nbsp;·&nbsp; DeepSeek 驱动
+    </p>
+</div>
 """, unsafe_allow_html=True)
 
-# 标题
-st.title("📊 财报 AI 助手")
-st.caption("上传财报 PDF，AI 自动解析关键数据并回答你的问题")
+# 如果还没有上传结果，显示引导页面
+if 'result' not in st.session_state:
 
-# ============================================================
-# Session State 初始化
-# ============================================================
-if "result" not in st.session_state:
-    st.session_state.result = {}
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "summary" not in st.session_state:
-    st.session_state.summary = None
-if "radar_data" not in st.session_state:
-    st.session_state.radar_data = None
-if "current_pdf_hash" not in st.session_state:
-    st.session_state.current_pdf_hash = ""
-
-
-# ============================================================
-# 自动滚动 JS（让最新回答始终可见）
-# ============================================================
-def _auto_scroll():
-    components.html("""
-    <script>
-    function scrollToBottom() {
-        const chatArea = window.parent.document.querySelector('[data-testid="stChatMessageContainer"]');
-        if (chatArea) {
-            chatArea.scrollTop = chatArea.scrollHeight;
-        } else {
-            window.parent.scrollTo(0, document.body.scrollHeight);
-        }
-    }
-    setTimeout(scrollToBottom, 100);
-    </script>
-    """, height=0)
-
-
-# ============================================================
-# 主布局：左右两栏
-# ============================================================
-col1, col2 = st.columns([1, 2], gap="large")
-
-with col1:
-    st.markdown("### 📄 上传财报 PDF")
-    uploaded_file = st.file_uploader(
-        "选择 PDF 文件",
-        type="pdf",
-        label_visibility="collapsed",
-    )
-    if uploaded_file:
-        st.success(f"已选择: {uploaded_file.name}")
+    st.markdown("""
+    <div style="
+        text-align: center;
+        padding: 4rem 2rem;
+        margin: 2rem auto;
+        max-width: 600px;
+        background: linear-gradient(135deg, #1a1d29 0%, #141620 100%);
+        border: 1px solid rgba(0, 212, 170, 0.1);
+        border-radius: 16px;
+    ">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
+        <h2 style="color: #00d4aa; margin-bottom: 0.5rem;">上传你的第一份财报</h2>
+        <p style="color: #64748b; font-size: 0.95rem; line-height: 1.8;">
+            支持 PDF 格式的上市公司年度/季度财报<br>
+            AI 将自动解析财务数据，支持自由对话问答
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.divider()
 
-    if st.button("✨ 生成核心摘要", use_container_width=True):
-        if not st.session_state.get("result"):
-            st.warning("请先上传并解析财报 PDF")
-        else:
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.markdown("**📤 上传财报**")
+        uploaded_file = st.file_uploader("选择 PDF 文件", type="pdf", label_visibility="collapsed")
+
+        if uploaded_file is not None:
+            if st.button("🚀 开始解析", type="primary", use_container_width=True):
+                with st.spinner("📤 正在上传文件..."):
+                    progress = st.progress(0)
+                    try:
+                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                        progress.progress(30, text="🔍 正在解析 PDF 文本...")
+                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
+                        progress.progress(70, text="🧠 正在构建 RAG 向量库...")
+                        if resp.status_code == 200:
+                            progress.progress(100, text="✅ 解析完成！")
+                            result_data = resp.json()
+                            st.session_state.result = result_data
+                            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
+                            st.session_state.messages = []
+                            st.session_state.summary = None
+                            if "pending_question" in st.session_state:
+                                del st.session_state.pending_question
+                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
+                            st.rerun()
+                        else:
+                            progress.empty()
+                            try:
+                                err = resp.json().get("error", "未知错误")
+                            except Exception:
+                                err = f"HTTP {resp.status_code}"
+                            st.error(f"解析失败：{err}")
+                    except Exception as e:
+                        progress.empty()
+                        st.error(f"连接错误: {e}")
+
+    with col2:
+        st.markdown("""
+        <div style="padding: 2rem; background: #1a1d29; border-radius: 12px; border: 1px solid rgba(0,212,170,0.08);">
+            <h3 style="color: #f0b429; margin-top: 0;">💡 功能特性</h3>
+            <ul style="line-height: 2.2; color: #94a3b8;">
+                <li>🧠 <strong style="color: #e2e8f0;">AI 智能摘要</strong> — 一键生成财报核心要点</li>
+                <li>💬 <strong style="color: #e2e8f0;">自由对话</strong> — 基于财报内容的深度问答</li>
+                <li>📊 <strong style="color: #e2e8f0;">财务计算</strong> — 19 种专业分析工具自动调用</li>
+                <li>📄 <strong style="color: #e2e8f0;">精准溯源</strong> — 回答定位到原文页码</li>
+                <li>🔄 <strong style="color: #e2e8f0;">多份财报</strong> — 支持切换不同财报分析</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+else:
+    # ===== 已上传状态：主界面 =====
+
+    # 获取当前文件名
+    current_filename = st.session_state.result.get("filename", "未知文件")
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.markdown(f"**📤 上传财报**")
+        st.caption(f"当前：`{current_filename}`")
+        uploaded_file = st.file_uploader("替换 PDF 文件", type="pdf", label_visibility="collapsed")
+
+        if uploaded_file is not None:
+            if st.button("🚀 重新解析", type="primary", use_container_width=True):
+                with st.spinner("📤 正在上传文件..."):
+                    progress = st.progress(0)
+                    try:
+                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                        progress.progress(30, text="🔍 正在解析 PDF 文本...")
+                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
+                        progress.progress(70, text="🧠 正在构建 RAG 向量库...")
+                        if resp.status_code == 200:
+                            progress.progress(100, text="✅ 解析完成！")
+                            result_data = resp.json()
+                            st.session_state.result = result_data
+                            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
+                            st.session_state.messages = []
+                            st.session_state.summary = None
+                            if "pending_question" in st.session_state:
+                                del st.session_state.pending_question
+                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
+                            st.rerun()
+                        else:
+                            progress.empty()
+                            try:
+                                err = resp.json().get("error", "未知错误")
+                            except Exception:
+                                err = f"HTTP {resp.status_code}"
+                            st.error(f"解析失败：{err}")
+                    except Exception as e:
+                        progress.empty()
+                        st.error(f"连接错误: {e}")
+
+    with col2:
+        data = st.session_state.result.get("analysis_result", {})
+
+        # 展示表格
+        tables = data.get("tables", [])
+        if tables:
+            st.info(f"📊 发现 {len(tables)} 个表格")
+            with st.expander("查看表格"):
+                 for t in tables:
+                     rows = t.get('data', [])
+                     if not rows:
+                         st.caption("（此表格内容为空）")
+                     else:
+                         st.dataframe(pd.DataFrame(rows))
+
+        st.divider()
+
+        # --- 智能摘要板块 ---
+        st.markdown("### 🧠 智能分析报告")
+
+        if "summary" not in st.session_state:
+            st.session_state.summary = None
+        if "radar_data" not in st.session_state:
+            st.session_state.radar_data = None
+
+        if st.button("✨ 生成核心摘要", use_container_width=True):
             progress_text = st.empty()
             progress_bar = st.progress(0)
             summary_result = {"data": None, "error": None}
@@ -715,7 +1006,6 @@ with col1:
                 industry_list = ind_res.json().get("industries", []) if ind_res.status_code == 200 else []
             except Exception:
                 industry_list = ["制造业", "科技/互联网", "金融业", "零售/消费品", "能源", "医药", "房地产"]
-
             industry_options = ["自动识别"] + industry_list
             selected_industry = st.selectbox(
                 "行业基准对比",
@@ -745,6 +1035,7 @@ with col1:
                 except Exception as e:
                     radar_result["error"] = f"请求错误: {e}"
 
+            # 后台线程执行请求，主线程更新进度条
             t1 = threading.Thread(target=_generate_summary, daemon=True)
             t2 = threading.Thread(target=_generate_radar, daemon=True)
             t1.start()
@@ -768,7 +1059,7 @@ with col1:
             t2.join(timeout=60)
 
             if summary_result["data"]:
-                progress_bar.progress(100, text="✅ 分析完成！")
+                progress_bar.progress(100, text="✅ 摘要生成完成！")
                 st.session_state.summary = summary_result["data"]
             elif summary_result["error"]:
                 progress_bar.empty()
@@ -779,190 +1070,98 @@ with col1:
             elif radar_result["error"]:
                 st.warning(f"雷达图生成失败: {radar_result['error']}")
 
-    if st.session_state.summary:
-        summary_html = _md_lib.markdown(st.session_state.summary, extensions=['tables', 'fenced_code'])
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #1a1d29 0%, #162032 100%);
-            border: 1px solid rgba(0, 212, 170, 0.15);
-            border-left: 4px solid #00d4aa;
-            border-radius: 8px;
-            padding: 1.2rem 1.5rem;
-            line-height: 1.8;
-            color: #cbd5e1;
-        ">
-            {summary_html}
-        </div>
-        """, unsafe_allow_html=True)
+        if st.session_state.summary:
+            # Bug 1 修复：摘要 Markdown 需要先转换为 HTML
+            import markdown as _md_lib
+            summary_html = _md_lib.markdown(st.session_state.summary, extensions=['tables', 'fenced_code'])
+            st.markdown(f"""
+            <div style="
+                background: linear-gradient(135deg, #1a1d29 0%, #162032 100%);
+                border: 1px solid rgba(0, 212, 170, 0.15);
+                border-left: 4px solid #00d4aa;
+                border-radius: 8px;
+                padding: 1.2rem 1.5rem;
+                line-height: 1.8;
+                color: #cbd5e1;
+            ">
+                {summary_html}
+            </div>
+            """, unsafe_allow_html=True)
 
-    if st.session_state.radar_data:
-        _render_radar_chart(st.session_state.radar_data)
+        if st.session_state.radar_data:
+            _render_radar_chart(st.session_state.radar_data)
 
-with col2:
-    data = st.session_state.result.get("analysis_result", {})
+        st.divider()
+        st.markdown("### 💬 对话 DeepSeek")
 
-    # 展示表格
-    tables = data.get("tables", [])
-    if tables:
-        st.info(f"📊 发现 {len(tables)} 个表格")
-        with st.expander("查看表格"):
-             for t in tables:
-                 rows = t.get('data', [])
-                 if not rows:
-                     st.caption("（此表格内容为空）")
-                 else:
-                     # 转为 markdown 表格（避免白底）
-                     if rows and isinstance(rows[0], dict):
-                         headers = list(rows[0].keys())
-                         md_rows = ["| " + " | ".join(str(r.get(h, "")) for h in headers) + " |" for r in rows]
-                         header_line = "| " + " | ".join(headers) + " |"
-                         separator = "| " + " | ".join(["---"] * len(headers)) + " |"
-                         st.markdown(header_line + "\n" + separator + "\n" + "\n".join(md_rows))
-                     elif rows and isinstance(rows[0], list):
-                         md_rows = ["| " + " | ".join(str(c) for c in row) + " |" for row in rows]
-                         st.markdown("\n".join(md_rows))
-                     else:
-                         st.write(rows)
+        # 初始化 session state
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
 
-    st.divider()
-    st.markdown("### 💬 对话 DeepSeek")
+        # ========== 预设问题 ==========
+        preset_questions = {
+            "📊 基础数据": [
+                "这份财报的营收是多少？",
+                "净利润是多少？",
+                "公司总资产是多少？",
+            ],
+            "📈 盈利能力": [
+                "公司的毛利率是多少？",
+                "净利率是多少？",
+                "净资产收益率(ROE)是多少？",
+                "每股收益(EPS)是多少？",
+            ],
+            "📉 成长能力": [
+                "净利润同比增长了多少？",
+                "营收同比增长了多少？",
+                "分析一下公司的成长趋势",
+            ],
+            "🏦 偿债能力": [
+                "资产负债率是多少？",
+                "流动比率是多少？",
+                "速动比率是多少？",
+            ],
+            "🔄 运营能力": [
+                "资产周转率是多少？",
+                "存货周转率是多少？",
+            ],
+            "🔍 综合分析": [
+                "请生成一份财务摘要",
+                "公司的盈利能力强吗？",
+                "公司面临哪些主要风险？",
+                "与行业平均水平对比如何？",
+            ]
+        }
 
-    # ========== 预设问题 ==========
-    preset_questions = {
-        "📊 基础数据": [
-            "这份财报的营收是多少？",
-            "净利润是多少？",
-            "公司总资产是多少？",
-        ],
-        "📈 盈利能力": [
-            "公司的毛利率是多少？",
-            "净利率是多少？",
-            "净资产收益率(ROE)是多少？",
-            "每股收益(EPS)是多少？",
-        ],
-        "📉 成长能力": [
-            "净利润同比增长了多少？",
-            "营收同比增长了多少？",
-            "分析一下公司的成长趋势",
-        ],
-        "🏦 偿债能力": [
-            "资产负债率是多少？",
-            "流动比率是多少？",
-            "速动比率是多少？",
-        ],
-        "🔄 运营能力": [
-            "资产周转率是多少？",
-            "存货周转率是多少？",
-            "应收账款周转率是多少？",
-        ],
-        "💰 分红": [
-            "今年分红了吗？",
-            "股息率是多少？",
-        ],
-    }
-
-    # 如果还没上传文件，显示预设问题引导
-    if not st.session_state.result:
-        st.markdown("##### 💡 试试问这些问题（上传财报后即可提问）")
         for category, questions in preset_questions.items():
             st.markdown(f"**{category}**")
-            for q in questions:
-                st.markdown(f"• {q}")
-        st.markdown("---")
-        st.info("👆 请先在左侧上传财报 PDF 文件，然后就可以开始提问了！")
+            cols = st.columns(len(questions))
+            for i, question in enumerate(questions):
+                with cols[i]:
+                    if st.button(f"→ {question}", key=f"preset_{category}_{i}", use_container_width=True):
+                        st.session_state.pending_question = question
+                        st.rerun()
 
-    # 渲染历史消息
-    for idx, msg in enumerate(st.session_state.messages):
-        with st.chat_message(msg["role"]):
-            st.markdown(_render_message_content(msg), unsafe_allow_html=True)
-            # AI 回答下方显示推荐问题
-            if msg["role"] == "assistant" and msg.get("recommendations"):
-                _render_recommended(msg["recommendations"], idx)
+        # ========== 渲染历史消息 ==========
+        is_processing = "pending_question" in st.session_state
+        for idx, msg in enumerate(st.session_state.messages):
+            with st.chat_message(msg["role"]):
+                # 清理历史消息中的 HTML 残留
+                content = _clean_ai_message(msg["content"]) if msg["role"] == "assistant" else msg["content"]
+                st.markdown(content)
+                if msg["role"] == "assistant":
+                    btn_key = msg.get("source_btn_key", f"source_hist_{idx}")
+                    _render_source_images(msg.get("source_pages", []), btn_key)
+                    # 回答进行中时，隐藏所有历史消息的推荐按钮（避免重复显示）
+                    if not is_processing:
+                        _render_recommended(msg.get("recommended"), idx)
 
-    # 处理挂起的推荐问题
-    if "pending_question" in st.session_state:
-        user_question = st.session_state.pop("pending_question")
-        st.session_state.messages.append({"role": "user", "content": user_question})
+        # ========== 处理 pending_question ==========
+        if "pending_question" in st.session_state:
+            prompt = st.session_state.pending_question
+            del st.session_state.pending_question
+            _process_chat(prompt)
 
-        with st.chat_message("user"):
-            st.markdown(user_question)
-
-        with st.chat_message("assistant"):
-            with st.spinner("AI 正在分析财报..."):
-                try:
-                    history = _extract_history_for_api()
-                    resp = requests.post(
-                        f"{API_URL}/chat",
-                        json={"question": user_question, "history": history},
-                        timeout=120,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        answer = data.get("answer", "无法回答")
-                        source_pages = data.get("source_pages", [])
-                        recommendations = data.get("recommendations", [])
-                    else:
-                        answer = f"请求失败: HTTP {resp.status_code}"
-                        source_pages = []
-                        recommendations = []
-                except Exception as e:
-                    answer = f"连接错误: {e}"
-                    source_pages = []
-                    recommendations = []
-
-            ai_msg = {
-                "role": "assistant",
-                "content": answer,
-                "source_pages": source_pages,
-                "recommendations": recommendations,
-            }
-            st.session_state.messages.append(ai_msg)
-            st.markdown(_render_message_content(ai_msg), unsafe_allow_html=True)
-            if recommendations:
-                _render_recommended(recommendations, len(st.session_state.messages) - 1)
-
-        _auto_scroll()
-
-    # 聊天输入框（仅在已上传文件后显示）
-    if st.session_state.result:
-        if user_question := st.chat_input("请提问这份财报的内容..."):
-            st.session_state.messages.append({"role": "user", "content": user_question})
-
-            with st.chat_message("user"):
-                st.markdown(user_question)
-
-            with st.chat_message("assistant"):
-                with st.spinner("AI 正在分析财报..."):
-                    try:
-                        history = _extract_history_for_api()
-                        resp = requests.post(
-                            f"{API_URL}/chat",
-                            json={"question": user_question, "history": history},
-                            timeout=120,
-                        )
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            answer = data.get("answer", "无法回答")
-                            source_pages = data.get("source_pages", [])
-                            recommendations = data.get("recommendations", [])
-                        else:
-                            answer = f"请求失败: HTTP {resp.status_code}"
-                            source_pages = []
-                            recommendations = []
-                    except Exception as e:
-                        answer = f"连接错误: {e}"
-                        source_pages = []
-                        recommendations = []
-
-                ai_msg = {
-                    "role": "assistant",
-                    "content": answer,
-                    "source_pages": source_pages,
-                    "recommendations": recommendations,
-                }
-                st.session_state.messages.append(ai_msg)
-                st.markdown(_render_message_content(ai_msg), unsafe_allow_html=True)
-                if recommendations:
-                    _render_recommended(recommendations, len(st.session_state.messages) - 1)
-
-            _auto_scroll()
+        # ========== 正常输入 ==========
+        if prompt := st.chat_input("请输入问题..."):
+            _process_chat(prompt)
