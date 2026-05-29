@@ -611,26 +611,72 @@ def _render_radar_chart(radar_data: dict):
     categories_closed = categories + [categories[0]]
     values_closed = values + [values[0]]
 
+    # 根据综合评分动态选色
+    if composite >= 80:
+        fill_color = 'rgba(0, 212, 170, 0.25)'
+        line_color = '#00d4aa'
+        line_width = 2.5
+    elif composite >= 60:
+        fill_color = 'rgba(79, 195, 247, 0.22)'
+        line_color = '#4fc3f7'
+        line_width = 2.5
+    elif composite >= 40:
+        fill_color = 'rgba(255, 183, 77, 0.22)'
+        line_color = '#ffb74d'
+        line_width = 2.5
+    else:
+        fill_color = 'rgba(239, 83, 80, 0.22)'
+        line_color = '#ef5350'
+        line_width = 2.5
+
     fig = go.Figure()
+
+    # 填充区域（渐变效果通过多层半透明实现）
     fig.add_trace(go.Scatterpolar(
         r=values_closed,
         theta=categories_closed,
         fill='toself',
-        fillcolor='rgba(0, 212, 170, 0.2)',
-        line=dict(color='#00d4aa', width=2),
-        hovertemplate='%{theta}: %{r:.1f}/100<extra></extra>',
+        fillcolor=fill_color,
+        line=dict(color=line_color, width=line_width),
+        hovertemplate='<b>%{theta}</b><br>评分: %{r:.1f}/100<extra></extra>',
+        name='企业评分',
     ))
+
+    # 60 分基准线
+    baseline = [60] * len(categories_closed)
+    fig.add_trace(go.Scatterpolar(
+        r=baseline,
+        theta=categories_closed,
+        mode='lines',
+        line=dict(color='rgba(255,255,255,0.15)', width=1, dash='dot'),
+        hoverinfo='skip',
+        showlegend=False,
+    ))
+
     fig.update_layout(
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=10, color='#8892a4'), gridcolor='rgba(255,255,255,0.08)'),
-            angularaxis=dict(tickfont=dict(size=12, color='#e2e8f0'), gridcolor='rgba(255,255,255,0.08)'),
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                tickvals=[20, 40, 60, 80, 100],
+                ticktext=['20', '40', '60', '80', '100'],
+                tickfont=dict(size=11, color='#8892a4'),
+                gridcolor='rgba(255,255,255,0.06)',
+                linecolor='rgba(255,255,255,0.06)',
+            ),
+            angularaxis=dict(
+                tickfont=dict(size=13, color='#e2e8f0', family='Microsoft YaHei'),
+                gridcolor='rgba(255,255,255,0.08)',
+                linecolor='rgba(255,255,255,0.08)',
+            ),
             bgcolor='rgba(0,0,0,0)',
         ),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         showlegend=False,
-        margin=dict(l=60, r=60, t=30, b=30),
-        height=380,
+        margin=dict(l=80, r=80, t=50, b=50),
+        height=500,
+        font=dict(family='Microsoft YaHei'),
     )
     st.plotly_chart(fig, use_container_width=True)
 
