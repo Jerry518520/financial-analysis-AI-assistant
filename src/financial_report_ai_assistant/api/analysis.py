@@ -23,18 +23,19 @@ class AnalysisRequest(BaseModel):
 # 不同 focus 对应的检索关键词
 FOCUS_QUERIES = {
     "general": [
-        "Financial Highlights and Key Figures",
+        "营业收入 营业成本 净利润 毛利率",
+        "归属于上市公司股东的净利润",
+        "合并利润表 营业收入 净利润",
         "主要财务数据和指标",
+        "总资产 所有者权益",
         "Business Overview and Outlook",
-        "公司业务概要",
     ],
     "financial": [
-        "Financial Highlights and Key Figures",
+        "营业收入 营业成本 毛利率",
+        "归属于上市公司股东的净利润",
+        "合并利润表 营业收入 营业成本 净利润 利润总额",
         "主要财务数据和指标",
-        "Revenue and Profit Analysis",
-        "收入和利润分析",
-        "Balance Sheet",
-        "合并资产负债表",
+        "合并资产负债表 总资产 负债总额",
     ],
     "risk": [
         "Risk Factors",
@@ -107,6 +108,13 @@ async def generate_report_summary(request: AnalysisRequest):
 4. **未来展望**：管理层对未来的预期。
 
 【分析重点】：{focus_hint}
+
+【数据使用规则（必须严格遵守）】：
+- 营业收入和营业成本必须来自同一张表（合并利润表或主要会计数据表），禁止混合不同表格的数据
+- 毛利率 = (营业收入 - 营业成本) / 营业收入，用合并报表数据计算。如果片段中没有营业成本数据，直接写"毛利率：见财报原文"，禁止估算
+- 净利润优先使用"归属于上市公司股东的净利润"，如无则用"净利润"
+- 禁止用利润总额代替净利润，禁止用营业总成本代替营业成本
+- 如果某个指标在片段中确实找不到，直接省略该指标，不要编造或估算
 
 请使用 Markdown 格式输出，使用小标题（###）分隔不同部分。如果某些信息在片段中未找到，请直接省略该部分，不要编造。
 保持语言专业、客观、精炼。
