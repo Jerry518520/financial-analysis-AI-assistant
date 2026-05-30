@@ -18,6 +18,7 @@ import hashlib
 import io
 import asyncio
 import re
+import uuid
 
 # 导入所有服务
 from financial_report_ai_assistant.services.document_parser import parse_pdf_bytes
@@ -37,6 +38,34 @@ CURRENT_PDF_PATH = None
 _current_pdf_lock = threading.Lock()
 CACHE_DIR = "cache_data"
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB 上传限制
+
+# ==================== 异步任务管理 ====================
+_jobs: dict = {}  # job_id -> {"status": "processing"|"done"|"error", "progress": str, "result": dict, "error": str}
+_jobs_lock = threading.Lock()
+
+
+def _cleanup_old_cache(keep_hash: str):
+    """清理 cache_data 中与当前文档无关的旧文件，只保留 keep_hash 对应的缓存。"""
+    if not os.path.exists(CACHE_DIR):
+        return
+    removed = 0
+    for fname in os.listdir(CACHE_DIR):
+        fpath = os.path.join(CACHE_DIR, fname)
+        if not os.path.isfile(fpath):
+            continue
+        # 保留当前文档相关的文件
+        if keep_hash in fname:
+            continue
+        # 保留特殊文件
+        if fname.startswith("."):
+            continue
+        try:
+            os.remove(fpath)
+            removed += 1
+        except OSError:
+            pass
+    if removed:
+        print(f"[CACHE] 已清理 {removed} 个旧缓存文件")
 
 app.include_router(analysis_router)
 
@@ -59,54 +88,94 @@ def read_root():
 
 @app.post("/upload")
 async def upload_financial_report(file: UploadFile = File(...), parser: str = "llamaparse"):
-    """上传并解析财报 PDF。
+    """上传财报 PDF，立即返回 job_id，后台异步解析。
 
     Args:
-        parser: 解析引擎选择 - "llamaparse" 或 "kimi"
+        parser: 解析引擎选择 - "llamaparse"、"kimi" 或 "mimo"
     """
     global CURRENT_PDF_PATH
     content = await file.read()
-    
+
     if len(content) > MAX_UPLOAD_SIZE:
         return JSONResponse(status_code=413, content={"error": f"文件过大，最大支持 {MAX_UPLOAD_SIZE // (1024*1024)}MB"})
-    
-    try:
-        # 0. 【新增】保存 PDF 到缓存目录，供 /highlight 使用
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        file_hash = hashlib.md5(content).hexdigest()
-        pdf_path = os.path.join(CACHE_DIR, f"current_{file_hash}.pdf")
-        with open(pdf_path, "wb") as f:
-            f.write(content)
-        with _current_pdf_lock:
-            CURRENT_PDF_PATH = pdf_path
-        print(f"[PDF] 已保存: {pdf_path}")
 
-        # 1. 解析 PDF (获取全量文本)
-        result = parse_pdf_bytes(content, parser=parser)
-        
-        # 2. 构建 RAG 向量库（传入文件哈希，新文件自动重建索引）
-        full_text = result.get("full_text", "")
-        print(f"[PARSE] 解析结果: 文本长度 = {len(full_text)} 字符")
-        if full_text:
-            print("[RAG] 开始构建 RAG 向量库...")
-            # 使用 asyncio.to_thread 避免阻塞事件循环（GPU 计算 + 模型加载耗时较长）
-            success = await asyncio.to_thread(build_vector_store, full_text, file_hash)
-            if success:
-                print(">>> RAG 索引构建成功！")
+    # 保存 PDF 到缓存目录
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    file_hash = hashlib.md5(content).hexdigest()
+    pdf_path = os.path.join(CACHE_DIR, f"current_{file_hash}.pdf")
+    with open(pdf_path, "wb") as f:
+        f.write(content)
+    with _current_pdf_lock:
+        CURRENT_PDF_PATH = pdf_path
+    print(f"[PDF] 已保存: {pdf_path}")
+
+    # 清理旧缓存，只保留当前文档的
+    _cleanup_old_cache(file_hash)
+
+    # 创建任务，立即返回 job_id
+    job_id = str(uuid.uuid4())[:8]
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "processing", "progress": "🔍 正在解析 PDF...", "result": None, "error": None}
+
+    # 后台线程执行解析 + RAG 构建
+    def _do_parse():
+        global CURRENT_PDF_PATH
+        try:
+            with _jobs_lock:
+                _jobs[job_id]["progress"] = "🔍 正在解析 PDF 文本..."
+            result = parse_pdf_bytes(content, parser=parser)
+
+            full_text = result.get("full_text", "")
+            print(f"[PARSE] 解析结果: 文本长度 = {len(full_text)} 字符")
+
+            if full_text:
+                with _jobs_lock:
+                    _jobs[job_id]["progress"] = "🧠 正在构建 RAG 向量库..."
+                print("[RAG] 开始构建 RAG 向量库...")
+                success = build_vector_store(full_text, file_hash)
+                if success:
+                    print(">>> RAG 索引构建成功！")
+                else:
+                    print(">>> RAG 索引构建失败！")
+                    with _jobs_lock:
+                        _jobs[job_id] = {"status": "error", "progress": "", "result": None, "error": "RAG 向量库构建失败"}
+                    return
             else:
-                print(">>> RAG 索引构建失败！")
-                return JSONResponse(status_code=500, content={"error": "RAG 向量库构建失败，请检查服务端日志"})
-        else:
-            print("[WARN] 解析结果中没有 full_text 字段")
-            clear_pending_state()
+                print("[WARN] 解析结果中没有 full_text 字段")
+                clear_pending_state()
 
-        # 为了前端显示清爽，我们把 full_text 从返回结果里去掉 (太大了，没必要传给前端)
-        if "full_text" in result:
-            del result["full_text"]
+            if "full_text" in result:
+                del result["full_text"]
 
-        return {"filename": file.filename, "analysis_result": result, "pdf_hash": file_hash}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"解析失败: {str(e)}"})
+            with _jobs_lock:
+                _jobs[job_id] = {
+                    "status": "done",
+                    "progress": "✅ 解析完成！",
+                    "result": {"filename": file.filename, "analysis_result": result, "pdf_hash": file_hash},
+                    "error": None,
+                }
+        except Exception as e:
+            print(f"[PARSE] 后台解析失败: {e}")
+            with _jobs_lock:
+                _jobs[job_id] = {"status": "error", "progress": "", "result": None, "error": str(e)}
+
+    threading.Thread(target=_do_parse, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/status/{job_id}")
+async def get_job_status(job_id: str):
+    """查询异步解析任务的状态。"""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "任务不存在"})
+    return {
+        "status": job["status"],
+        "progress": job["progress"],
+        "result": job["result"],
+        "error": job["error"],
+    }
 
 
 @app.post("/preview-chunks")

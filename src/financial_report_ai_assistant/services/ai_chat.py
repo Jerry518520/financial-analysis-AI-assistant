@@ -5,25 +5,60 @@ from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
+# ==================== LLM 提供商配置 ====================
+# 支持 "deepseek" 和 "mimo" 两种提供商，通过 LLM_PROVIDER 环境变量切换
+_LLM_PROVIDER_CONFIG = {
+    "deepseek": {
+        "env_key": "DEEPSEEK_API_KEY",
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+    },
+    "mimo": {
+        "env_key": "MIMO_API_KEY",
+        "model": os.getenv("MIMO_MODEL", "mimo-v2.5"),
+        "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+    },
+}
+
+
+def _get_provider_config() -> dict:
+    """获取当前 LLM 提供商配置"""
+    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+    if provider not in _LLM_PROVIDER_CONFIG:
+        print(f"⚠️ 未知 LLM_PROVIDER '{provider}'，回退到 deepseek")
+        provider = "deepseek"
+    return _LLM_PROVIDER_CONFIG[provider]
+
+
 # 延迟初始化：不再在模块级 raise，首次访问时才创建 LLM 实例
 _llm_instance = None
 
 
 def get_llm():
-    """获取或延迟初始化 DeepSeek LLM 实例"""
+    """获取或延迟初始化 LLM 实例（根据 LLM_PROVIDER 选择 DeepSeek 或 MiMo）"""
     global _llm_instance
     if _llm_instance is None:
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        config = _get_provider_config()
+        api_key = os.getenv(config["env_key"])
         if not api_key:
-            raise ValueError("❌ 未找到 DEEPSEEK_API_KEY，请检查 .env 文件！")
+            raise ValueError(f"❌ 未找到 {config['env_key']}，请检查 .env 文件！")
+        provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+
+        # MiMo API 使用 api-key 请求头认证，而非标准 Bearer
+        extra_kwargs = {}
+        if provider == "mimo":
+            extra_kwargs["default_headers"] = {"api-key": api_key}
+
         _llm_instance = ChatOpenAI(
-            model="deepseek-chat",
+            model=config["model"],
             api_key=api_key,
-            base_url="https://api.deepseek.com",
+            base_url=config["base_url"],
             temperature=0.3,
             timeout=60,
             max_retries=2,
+            **extra_kwargs,
         )
+        print(f"✅ LLM 已初始化: provider={provider}, model={config['model']}")
     return _llm_instance
 
 

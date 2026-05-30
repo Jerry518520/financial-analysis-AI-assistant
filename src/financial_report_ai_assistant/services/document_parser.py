@@ -141,6 +141,64 @@ def _parse_page_with_kimi(page_image_bytes: bytes, page_num: int) -> str:
         return ""
 
 
+# ==================== MiMo 多模态解析 ====================
+
+MIMO_API_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
+MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5")
+
+MIMO_PARSE_PROMPT = """请仔细分析这张财报页面图片，提取其中的所有内容，以 Markdown 格式输出。
+
+要求：
+1. 文字内容直接输出
+2. 表格用 Markdown 表格格式输出（| 分隔），保持原始列顺序和年份标注
+3. 如果有图表，描述图表的关键数据和趋势
+4. 保留页码、脚注等辅助信息
+5. 不要添加任何解释或总结，只输出页面原始内容"""
+
+
+def _parse_page_with_mimo(page_image_bytes: bytes, page_num: int) -> str:
+    """用 MiMo 多模态模型解析单个 PDF 页面图片，返回 Markdown 文本。"""
+    api_key = os.getenv("MIMO_API_KEY")
+    if not api_key:
+        return ""
+
+    b64_image = base64.b64encode(page_image_bytes).decode("utf-8")
+
+    headers = {
+        "api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": MIMO_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a document parsing assistant. Output in the SAME language as the source document. If the document is in Chinese, output in Chinese. If in English, output in English. Always use Markdown format.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}},
+                    {"type": "text", "text": MIMO_PARSE_PROMPT},
+                ],
+            }
+        ],
+        "max_completion_tokens": 4096,
+        "temperature": 0.1,
+    }
+
+    try:
+        resp = requests.post(MIMO_API_URL, headers=headers, json=payload, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        print(f"✅ MiMo Page {page_num}: {len(content)} chars")
+        return content
+    except Exception as e:
+        print(f"⚠️ MiMo Page {page_num} 解析失败: {e}")
+        return ""
+
+
 def _render_page_to_png(page, dpi: int = 200) -> bytes:
     """将 PDF 页面渲染为 PNG 图片字节。"""
     mat = fitz.Matrix(dpi / 72, dpi / 72)
@@ -331,7 +389,7 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str
 
     Args:
         file_content: PDF 文件的字节内容
-        parser: 解析引擎选择 - "llamaparse" 或 "kimi"
+        parser: 解析引擎选择 - "llamaparse"、"kimi" 或 "mimo"
     """
     print(f"🚀 [Hybrid Parser] 启动混合解析引擎 (parser={parser})...")
 
@@ -431,15 +489,17 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str
             
             # 对 PyMuPDF 效果不好的页面，使用外部解析引擎
             if pages_need_llama:
-                if parser == "kimi":
-                    # Kimi 多模态：逐页渲染为图片并解析，无页数限制
-                    print(f"🔮 使用 Kimi 多模态解析 {len(pages_need_llama)} 页表格...")
+                if parser in ("kimi", "mimo"):
+                    # 多模态模型：逐页渲染为图片并解析，无页数限制
+                    parse_fn = _parse_page_with_kimi if parser == "kimi" else _parse_page_with_mimo
+                    label = "Kimi" if parser == "kimi" else "MiMo"
+                    print(f"🔮 使用 {label} 多模态解析 {len(pages_need_llama)} 页表格...")
                     for idx in pages_need_llama:
                         page = doc[idx]
                         img_bytes = _render_page_to_png(page)
-                        result = _parse_page_with_kimi(img_bytes, idx + 1)
+                        result = parse_fn(img_bytes, idx + 1)
                         if result:
-                            llama_pages_content[idx] = f"--- Page {idx+1} (Kimi Enhanced) ---\n{result}\n"
+                            llama_pages_content[idx] = f"--- Page {idx+1} ({label} Enhanced) ---\n{result}\n"
                         else:
                             text = _get_page_text(page)
                             pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
@@ -502,19 +562,21 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str
 
         # 3b. 处理图片/图表页面
         if image_pages_indices:
-            if parser == "kimi":
-                # Kimi 多模态：逐页渲染为图片并解析，无页数限制
-                print(f"🔮 使用 Kimi 多模态解析 {len(image_pages_indices)} 页图表...")
+            if parser in ("kimi", "mimo"):
+                # 多模态模型：逐页渲染为图片并解析，无页数限制
+                parse_fn = _parse_page_with_kimi if parser == "kimi" else _parse_page_with_mimo
+                label = "Kimi" if parser == "kimi" else "MiMo"
+                print(f"🔮 使用 {label} 多模态解析 {len(image_pages_indices)} 页图表...")
                 for idx in image_pages_indices:
                     page = doc[idx]
                     img_bytes = _render_page_to_png(page)
-                    result = _parse_page_with_kimi(img_bytes, idx + 1)
+                    result = parse_fn(img_bytes, idx + 1)
                     if result:
-                        llama_pages_content[idx] = f"--- Page {idx+1} (Kimi 图表提取) ---\n{result}\n"
-                        print(f"✅ Page {idx+1}: Kimi 图表提取成功")
+                        llama_pages_content[idx] = f"--- Page {idx+1} ({label} 图表提取) ---\n{result}\n"
+                        print(f"✅ Page {idx+1}: {label} 图表提取成功")
                     else:
                         text = _get_page_text(page)
-                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，Kimi 解析失败]"
+                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，{label} 解析失败]"
             else:
                 # LlamaParse
                 api_key = os.getenv("LLAMA_CLOUD_API_KEY")

@@ -235,18 +235,28 @@ def get_tools():
 
 
 def create_llm():
-    """创建 LLM 实例"""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    """创建 LLM 实例（根据 LLM_PROVIDER 选择 DeepSeek 或 MiMo）"""
+    from financial_report_ai_assistant.services.ai_chat import _get_provider_config
+    config = _get_provider_config()
+    api_key = os.getenv(config["env_key"])
     if not api_key:
-        print("⚠️ Warning: DEEPSEEK_API_KEY not found.")
+        print(f"⚠️ Warning: {config['env_key']} not found.")
         return None
+    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+
+    # MiMo API 使用 api-key 请求头认证，而非标准 Bearer
+    extra_kwargs = {}
+    if provider == "mimo":
+        extra_kwargs["default_headers"] = {"api-key": api_key}
+
     return ChatOpenAI(
-        model="deepseek-chat",
+        model=config["model"],
         api_key=api_key,
-        base_url="https://api.deepseek.com",
+        base_url=config["base_url"],
         temperature=0.1,
         timeout=60,
         max_retries=2,
+        **extra_kwargs,
     )
 
 
