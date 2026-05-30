@@ -40,32 +40,53 @@ CACHE_DIR = "cache_data"
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB 上传限制
 
 # ==================== 异步任务管理 ====================
-_jobs: dict = {}  # job_id -> {"status": "processing"|"done"|"error", "progress": str, "result": dict, "error": str}
+_jobs: dict = {}  # job_id -> {"status": "processing"|"done"|"error", "progress": str, "result": dict, "error": str, "created_at": float}
 _jobs_lock = threading.Lock()
+_cache_lock = threading.Lock()  # 保护 _cleanup_old_cache 的并发访问
+
+# 完成的 job 保留 10 分钟后自动清理
+JOB_TTL_SECONDS = 600
+
+
+def _cleanup_old_jobs():
+    """清理已完成超过 JOB_TTL_SECONDS 的 job，防止内存泄漏。"""
+    import time
+    now = time.time()
+    with _jobs_lock:
+        expired = [
+            jid for jid, job in _jobs.items()
+            if job["status"] in ("done", "error")
+            and now - job.get("completed_at", job.get("created_at", now)) > JOB_TTL_SECONDS
+        ]
+        for jid in expired:
+            del _jobs[jid]
+    if expired:
+        print(f"[JOBS] 已清理 {len(expired)} 个过期任务")
 
 
 def _cleanup_old_cache(keep_hash: str):
     """清理 cache_data 中与当前文档无关的旧文件，只保留 keep_hash 对应的缓存。"""
     if not os.path.exists(CACHE_DIR):
         return
-    removed = 0
-    for fname in os.listdir(CACHE_DIR):
-        fpath = os.path.join(CACHE_DIR, fname)
-        if not os.path.isfile(fpath):
-            continue
-        # 保留当前文档相关的文件
-        if keep_hash in fname:
-            continue
-        # 保留特殊文件
-        if fname.startswith("."):
-            continue
-        try:
-            os.remove(fpath)
-            removed += 1
-        except OSError:
-            pass
-    if removed:
-        print(f"[CACHE] 已清理 {removed} 个旧缓存文件")
+    with _cache_lock:
+        removed = 0
+        for fname in os.listdir(CACHE_DIR):
+            fpath = os.path.join(CACHE_DIR, fname)
+            if not os.path.isfile(fpath):
+                continue
+            # 保留当前文档相关的文件
+            if keep_hash in fname:
+                continue
+            # 保留特殊文件
+            if fname.startswith("."):
+                continue
+            try:
+                os.remove(fpath)
+                removed += 1
+            except OSError:
+                pass
+        if removed:
+            print(f"[CACHE] 已清理 {removed} 个旧缓存文件")
 
 app.include_router(analysis_router)
 
@@ -113,9 +134,11 @@ async def upload_financial_report(file: UploadFile = File(...), parser: str = "l
     _cleanup_old_cache(file_hash)
 
     # 创建任务，立即返回 job_id
+    import time as _time
     job_id = str(uuid.uuid4())[:8]
+    _created_at = _time.time()
     with _jobs_lock:
-        _jobs[job_id] = {"status": "processing", "progress": "🔍 正在解析 PDF...", "result": None, "error": None}
+        _jobs[job_id] = {"status": "processing", "progress": "🔍 正在解析 PDF...", "result": None, "error": None, "created_at": _created_at}
 
     # 后台线程执行解析 + RAG 构建
     def _do_parse():
@@ -123,7 +146,13 @@ async def upload_financial_report(file: UploadFile = File(...), parser: str = "l
         try:
             with _jobs_lock:
                 _jobs[job_id]["progress"] = "🔍 正在解析 PDF 文本..."
-            result = parse_pdf_bytes(content, parser=parser)
+
+            def _on_progress(current, total, phase):
+                pct_text = f"📄 {phase} ({current}/{total})"
+                with _jobs_lock:
+                    _jobs[job_id]["progress"] = pct_text
+
+            result = parse_pdf_bytes(content, parser=parser, progress_callback=_on_progress)
 
             full_text = result.get("full_text", "")
             print(f"[PARSE] 解析结果: 文本长度 = {len(full_text)} 字符")
@@ -137,8 +166,10 @@ async def upload_financial_report(file: UploadFile = File(...), parser: str = "l
                     print(">>> RAG 索引构建成功！")
                 else:
                     print(">>> RAG 索引构建失败！")
+                    import time as _t1
                     with _jobs_lock:
-                        _jobs[job_id] = {"status": "error", "progress": "", "result": None, "error": "RAG 向量库构建失败"}
+                        _jobs[job_id] = {"status": "error", "progress": "", "result": None, "error": "RAG 向量库构建失败", "created_at": _created_at, "completed_at": _t1.time()}
+                    _cleanup_old_jobs()
                     return
             else:
                 print("[WARN] 解析结果中没有 full_text 字段")
@@ -147,17 +178,23 @@ async def upload_financial_report(file: UploadFile = File(...), parser: str = "l
             if "full_text" in result:
                 del result["full_text"]
 
+            import time as _t2
             with _jobs_lock:
                 _jobs[job_id] = {
                     "status": "done",
                     "progress": "✅ 解析完成！",
                     "result": {"filename": file.filename, "analysis_result": result, "pdf_hash": file_hash},
                     "error": None,
+                    "created_at": _created_at,
+                    "completed_at": _t2.time(),
                 }
+            _cleanup_old_jobs()
         except Exception as e:
             print(f"[PARSE] 后台解析失败: {e}")
+            import time as _t3
             with _jobs_lock:
-                _jobs[job_id] = {"status": "error", "progress": "", "result": None, "error": str(e)}
+                _jobs[job_id] = {"status": "error", "progress": "", "result": None, "error": str(e), "created_at": _created_at, "completed_at": _t3.time()}
+            _cleanup_old_jobs()
 
     threading.Thread(target=_do_parse, daemon=True).start()
     return {"job_id": job_id}
@@ -210,6 +247,36 @@ async def chat_with_report(request: ChatRequest):
         relevant_context = rag_result["context"]
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
+
+        # 【补充检索】如果问题是关于比率指标（如净利率、ROE），追加查询其组成原始数据
+        # 确保 Agent 能拿到计算所需的分子/分母数据
+        _DERIVED_METRIC_COMPONENTS = {
+            "净利率": ["净利润", "营业收入"],
+            "毛利率": ["营业收入", "营业成本"],
+            "ROE": ["净利润", "净资产"],
+            "净资产收益率": ["净利润", "净资产"],
+            "营业利润率": ["营业利润", "营业收入"],
+            "资产负债率": ["负债总额", "总资产"],
+            "流动比率": ["流动资产", "流动负债"],
+            "速动比率": ["流动资产", "存货", "流动负债"],
+            "资产周转率": ["营业收入", "总资产"],
+            "存货周转率": ["营业成本", "存货"],
+        }
+        for metric_name, components in _DERIVED_METRIC_COMPONENTS.items():
+            if metric_name in request.question:
+                for comp in components:
+                    if comp not in relevant_context:
+                        extra_result = await asyncio.to_thread(query_rag_with_source, comp, 3, 0.3)
+                        extra_ctx = extra_result.get("context", "")
+                        if extra_ctx and RAG_NOT_FOUND not in extra_ctx and RAG_INDEX_MISSING not in extra_ctx:
+                            existing_chunks = set(relevant_context.split("\n---\n"))
+                            for chunk in extra_ctx.split("\n---\n"):
+                                chunk = chunk.strip()
+                                if chunk and chunk not in existing_chunks:
+                                    relevant_context += "\n---\n" + chunk
+                                    existing_chunks.add(chunk)
+                            source_pages.extend(extra_result.get("source_pages", []))
+                break
 
         # source_pages 仅作为兜底，最终来源以 LLM 实际引用的页码为准
 
@@ -365,6 +432,25 @@ async def highlight_page(
         import traceback
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"渲染失败: {str(e)}"})
+
+@app.on_event("startup")
+def _restore_pdf_path():
+    """启动时扫描 cache_data/，恢复最近的 PDF 路径（避免重启后 /highlight 返回 404）"""
+    global CURRENT_PDF_PATH
+    if not os.path.exists(CACHE_DIR):
+        return
+    pdf_files = [
+        os.path.join(CACHE_DIR, f)
+        for f in os.listdir(CACHE_DIR)
+        if f.startswith("current_") and f.endswith(".pdf")
+    ]
+    if pdf_files:
+        # 取最新的文件
+        latest = max(pdf_files, key=os.path.getmtime)
+        with _current_pdf_lock:
+            CURRENT_PDF_PATH = latest
+        print(f"[STARTUP] 恢复 PDF 路径: {latest}")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

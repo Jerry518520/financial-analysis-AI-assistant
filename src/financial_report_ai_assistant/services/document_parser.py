@@ -96,10 +96,12 @@ KIMI_PARSE_PROMPT = """请仔细分析这张财报页面图片，提取其中的
 
 要求：
 1. 文字内容直接输出
-2. 表格用 Markdown 表格格式输出（| 分隔），保持原始列顺序和年份标注
-3. 如果有图表，描述图表的关键数据和趋势
-4. 保留页码、脚注等辅助信息
-5. 不要添加任何解释或总结，只输出页面原始内容"""
+2. 【最重要】所有表格必须用 Markdown 表格格式输出（| 分隔），每个数值必须完整放在一个单元格内，禁止将数字拆分到多个单元格
+3. 表格每行必须用 | 开头和结尾，列数保持一致
+4. 如果有图表，描述图表的关键数据和趋势
+5. 保留页码、脚注等辅助信息
+6. 不要添加任何解释或总结，只输出页面原始内容
+7. 数字必须保持原始精度，禁止省略小数位或截断数字"""
 
 
 def _parse_page_with_kimi(page_image_bytes: bytes, page_num: int) -> str:
@@ -125,7 +127,7 @@ def _parse_page_with_kimi(page_image_bytes: bytes, page_num: int) -> str:
                 ],
             }
         ],
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "temperature": 0.1,
     }
 
@@ -185,7 +187,7 @@ def _parse_page_with_mimo(page_image_bytes: bytes, page_num: int) -> str:
                 ],
             }
         ],
-        "max_completion_tokens": 4096,
+        "max_completion_tokens": 8192,
         "temperature": 0.1,
     }
 
@@ -386,12 +388,13 @@ def get_cache_path(file_content: bytes, parser: str = "llamaparse") -> str:
     file_hash = hashlib.md5(file_content).hexdigest()
     return os.path.join(CACHE_DIR, f"parsed_hybrid_{parser}_{file_hash}.md")
 
-def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str, Any]:
+def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_callback=None) -> Dict[str, Any]:
     """解析 PDF 文件内容，返回结构化文本。
 
     Args:
         file_content: PDF 文件的字节内容
         parser: 解析引擎选择 - "llamaparse"、"kimi" 或 "mimo"
+        progress_callback: 可选回调函数 callback(current_page, total_pages, phase)，用于报告解析进度
     """
     print(f"🚀 [Hybrid Parser] 启动混合解析引擎 (parser={parser})...")
 
@@ -464,6 +467,8 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str
                 text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
 
         print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，{len(image_pages_indices)} 页包含图表/图片，{len(text_pages_content)} 页纯文本。")
+        if progress_callback:
+            progress_callback(0, total_pages, "结构扫描完成，开始解析页面")
 
         # 3. 处理表格页面（优先 PyMuPDF，必要时 LlamaParse）
         llama_pages_content = {} # {page_index: markdown_content}
@@ -505,6 +510,8 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str
                         else:
                             text = _get_page_text(page)
                             pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                        if progress_callback:
+                            progress_callback(idx + 1, total_pages, f"表格页解析中 ({idx+1}/{total_pages})")
                 else:
                     # LlamaParse：限制页数
                     target_indices = pages_need_llama[:MAX_LLAMA_PAGES]
@@ -579,6 +586,8 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse") -> Dict[str
                     else:
                         text = _get_page_text(page)
                         text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，{label} 解析失败]"
+                    if progress_callback:
+                        progress_callback(idx + 1, total_pages, f"图表页解析中 ({idx+1}/{total_pages})")
             else:
                 # LlamaParse
                 api_key = os.getenv("LLAMA_CLOUD_API_KEY")

@@ -11,6 +11,54 @@ import time
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
+MAX_POLL_ITERATIONS = 600  # 600 次 × 3 秒 ≈ 30 分钟上限
+
+def _poll_job_status(job_id: str, uploaded_file_name: str):
+    """轮询解析任务状态，更新进度条。完成后设置 session_state 并 rerun。"""
+    pct = 10
+    progress = st.progress(pct, text="🔍 正在解析 PDF...")
+    poll_count = 0
+    while poll_count < MAX_POLL_ITERATIONS:
+        poll_count += 1
+        time.sleep(3)
+        status_resp = requests.get(f"{API_URL}/status/{job_id}", timeout=10)
+        if status_resp.status_code == 404:
+            progress.empty()
+            st.error("任务不存在，后端可能已重启。请重新上传文件。")
+            return
+        elif status_resp.status_code != 200:
+            progress.empty()
+            st.error(f"状态查询失败：HTTP {status_resp.status_code}")
+            return
+        job = status_resp.json()
+        if job["status"] == "processing":
+            progress_text_str = job.get("progress", "处理中...")
+            m = re.search(r'\((\d+)/(\d+)\)', progress_text_str)
+            if m:
+                cur, tot = int(m.group(1)), int(m.group(2))
+                pct = min(95, int(10 + 85 * cur / max(tot, 1)))
+            else:
+                pct = min(90, pct + 5)
+            progress.progress(pct, text=progress_text_str)
+        elif job["status"] == "done":
+            progress.progress(100, text="✅ 解析完成！")
+            result_data = job["result"]
+            st.session_state.result = result_data
+            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
+            st.session_state.messages = []
+            st.session_state.summary = None
+            if "pending_question" in st.session_state:
+                del st.session_state.pending_question
+            st.success(f"✅ 解析成功！已上传：{uploaded_file_name}")
+            st.rerun()
+            return
+        else:
+            progress.empty()
+            st.error(f"解析失败：{job.get('error', '未知错误')}")
+            return
+    progress.empty()
+    st.error("⏳ 解析超时（超过 30 分钟），请重试或检查后端服务。")
+
 # ============================================================
 # 深邃金融主题 CSS — 暗色系 + 翡翠绿accent + 金色点缀
 # ============================================================
@@ -841,10 +889,10 @@ def _process_chat(prompt):
             if not t.is_alive() or chat_result["error"]:
                 break
 
-        # 如果线程还在跑，继续等待（最多再等 180 秒）
+        # 如果线程还在跑，继续等待（最多再等 240 秒，总计 5×15+240=315s > HTTP timeout 300s）
         if t.is_alive():
             progress_text.markdown("⏳ Agent 深度分析中，请稍候...")
-            t.join(timeout=180)
+            t.join(timeout=240)
 
         if chat_result["error"]:
             progress_bar.empty()
@@ -951,36 +999,8 @@ if 'result' not in st.session_state:
                         st.error(f"上传失败：{err}")
                     else:
                         job_id = resp.json()["job_id"]
-                        pct = 10
-                        progress.progress(pct, text="🔍 正在解析 PDF...")
-                        import time
-                        while True:
-                            time.sleep(3)
-                            status_resp = requests.get(f"{API_URL}/status/{job_id}", timeout=10)
-                            if status_resp.status_code != 200:
-                                progress.empty()
-                                st.error(f"状态查询失败：HTTP {status_resp.status_code}")
-                                break
-                            job = status_resp.json()
-                            if job["status"] == "processing":
-                                pct = min(80, pct + 10)
-                                progress.progress(pct, text=job.get("progress", "处理中..."))
-                            elif job["status"] == "done":
-                                progress.progress(100, text="✅ 解析完成！")
-                                result_data = job["result"]
-                                st.session_state.result = result_data
-                                st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
-                                st.session_state.messages = []
-                                st.session_state.summary = None
-                                if "pending_question" in st.session_state:
-                                    del st.session_state.pending_question
-                                st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                                st.rerun()
-                                break
-                            else:
-                                progress.empty()
-                                st.error(f"解析失败：{job.get('error', '未知错误')}")
-                                break
+                        progress.empty()
+                        _poll_job_status(job_id, uploaded_file.name)
                 except Exception as e:
                     progress.empty()
                     st.error(f"连接错误: {e}")
@@ -1037,36 +1057,8 @@ else:
                         st.error(f"上传失败：{err}")
                     else:
                         job_id = resp.json()["job_id"]
-                        pct = 10
-                        progress.progress(pct, text="🔍 正在解析 PDF...")
-                        import time
-                        while True:
-                            time.sleep(3)
-                            status_resp = requests.get(f"{API_URL}/status/{job_id}", timeout=10)
-                            if status_resp.status_code != 200:
-                                progress.empty()
-                                st.error(f"状态查询失败：HTTP {status_resp.status_code}")
-                                break
-                            job = status_resp.json()
-                            if job["status"] == "processing":
-                                pct = min(80, pct + 10)
-                                progress.progress(pct, text=job.get("progress", "处理中..."))
-                            elif job["status"] == "done":
-                                progress.progress(100, text="✅ 解析完成！")
-                                result_data = job["result"]
-                                st.session_state.result = result_data
-                                st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
-                                st.session_state.messages = []
-                                st.session_state.summary = None
-                                if "pending_question" in st.session_state:
-                                    del st.session_state.pending_question
-                                st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                                st.rerun()
-                                break
-                            else:
-                                progress.empty()
-                                st.error(f"解析失败：{job.get('error', '未知错误')}")
-                                break
+                        progress.empty()
+                        _poll_job_status(job_id, uploaded_file.name)
                 except Exception as e:
                     progress.empty()
                     st.error(f"连接错误: {e}")

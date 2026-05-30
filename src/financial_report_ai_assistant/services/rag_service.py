@@ -118,13 +118,24 @@ def _split_by_page(full_text: str, max_chars_per_chunk: int = 3000) -> List[Docu
             if is_table:
                 # 【修复】先压缩表格中的空单元格，减少 embedding 噪音
                 compressed_content = _compress_markdown_table(content)
-                # 表格内容：不切分，保持完整，并增强上下文
-                enhanced_content = _enhance_table_content(compressed_content, page_num)
-                doc = Document(page_content=enhanced_content, metadata={"page_num": page_num, "type": "table"})
-                documents.append(doc)
-                PAGE_NUM_MAP[doc_index] = page_num
-                doc_index += 1
-                
+
+                # 【修复】超长表格按行拆分（每 20 行一个 chunk），避免单 chunk 过大导致 embedding 稀释
+                if len(compressed_content) > max_chars_per_chunk:
+                    table_chunks = _split_table_by_rows(compressed_content, page_num, rows_per_chunk=20)
+                    for chunk_text in table_chunks:
+                        enhanced = _enhance_table_content(chunk_text, page_num)
+                        doc = Document(page_content=enhanced, metadata={"page_num": page_num, "type": "table"})
+                        documents.append(doc)
+                        PAGE_NUM_MAP[doc_index] = page_num
+                        doc_index += 1
+                else:
+                    # 短表格：保持完整
+                    enhanced_content = _enhance_table_content(compressed_content, page_num)
+                    doc = Document(page_content=enhanced_content, metadata={"page_num": page_num, "type": "table"})
+                    documents.append(doc)
+                    PAGE_NUM_MAP[doc_index] = page_num
+                    doc_index += 1
+
                 # 【关键修复】提取关键财务指标行作为独立 chunk，提高检索精度
                 # 整页表格的 embedding 容易被大量数字和空单元格稀释语义，
                 # 独立的关键行 chunk 能让"资产总额"等词获得更高的检索相似度
@@ -174,6 +185,53 @@ def _compress_markdown_table(content: str) -> str:
     return '\n'.join(result)
 
 
+def _split_table_by_rows(content: str, page_num: int, rows_per_chunk: int = 20) -> List[str]:
+    """将大表格按行数拆分为多个子 chunk，每个 chunk 前附加表头行。
+
+    解决超长表格（100+ 行）作为单个 chunk 时 embedding 语义稀释的问题。
+    每个子 chunk 包含表头 + rows_per_chunk 行数据，保持表格结构完整。
+    """
+    lines = content.split('\n')
+
+    # 提取表头行（第一个非分隔、非空的 | 开头行）和分隔行
+    header_line = ""
+    separator_line = ""
+    data_lines = []
+    header_found = False
+
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped.startswith('|'):
+            continue
+        if re.match(r'^\|[-\s|]+\|$', line_stripped):
+            if header_found:
+                separator_line = line_stripped
+            continue
+        cells = [c.strip() for c in line_stripped.split('|')]
+        cells = [c for c in cells if c]
+        if not cells:
+            continue
+        if not header_found:
+            header_line = line_stripped
+            header_found = True
+        else:
+            data_lines.append(line_stripped)
+
+    if not header_line or not data_lines:
+        return [content]
+
+    # 按 rows_per_chunk 拆分数据行
+    chunks = []
+    for start in range(0, len(data_lines), rows_per_chunk):
+        chunk_lines = [header_line]
+        if separator_line:
+            chunk_lines.append(separator_line)
+        chunk_lines.extend(data_lines[start:start + rows_per_chunk])
+        chunks.append('\n'.join(chunk_lines))
+
+    return chunks
+
+
 # 财务指标行 → 可用于计算的财务指标标签映射
 # 作用：让关键行 chunk 在检索时能被对应的查询词高相似度命中
 _ROW_METRIC_TAGS = {
@@ -207,12 +265,42 @@ _ROW_METRIC_TAGS = {
 }
 
 
+def _extract_table_title(content: str) -> str:
+    """从表格内容中提取表格标题（如"合并利润表"、"母公司资产负债表"）。
+
+    扫描表格前的非表格行，查找财务报表标题关键词。
+    """
+    title_keywords = [
+        ("合并现金流量表", "合并现金流量表"),
+        ("合并利润表", "合并利润表"),
+        ("合并资产负债表", "合并资产负债表"),
+        ("母公司现金流量表", "母公司现金流量表"),
+        ("母公司利润表", "母公司利润表"),
+        ("母公司资产负债表", "母公司资产负债表"),
+        ("利润及利润分配表", "利润表"),
+        ("现金流量表", "现金流量表"),
+        ("资产负债表", "资产负债表"),
+        ("利润表", "利润表"),
+        ("主要财务数据", "主要财务数据"),
+        ("主要会计数据", "主要会计数据"),
+    ]
+    for line in content.split('\n'):
+        line = line.strip()
+        if line.startswith('|'):
+            continue  # 跳过表格行
+        for keyword, title in title_keywords:
+            if keyword in line:
+                return title
+    return ""
+
+
 def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
     """从表格中提取包含关键财务指标的行作为独立 chunk，提高检索精度。
 
     每个关键行前面会附加：
-    1. 表头行（年份列标签，如"2025年 | 2024年"），保持原始列对齐，确保 LLM 能正确归属数值
-    2. 关联计算指标标签，确保用户查询"存货周转率"时，"存货"等行能被高相似度召回
+    1. 表格标题（如"合并利润表" vs "母公司利润表"），帮助 LLM 区分数据来源
+    2. 表头行（年份列标签，如"2025年 | 2024年"），保持原始列对齐，确保 LLM 能正确归属数值
+    3. 关联计算指标标签，确保用户查询"存货周转率"时，"存货"等行能被高相似度召回
 
     注意：content 应为未压缩的原始表格文本，以保持表头与数据行的列对齐。
     """
@@ -242,6 +330,10 @@ def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
             header_row = ' | '.join(cells)
             break
 
+    # 提取表格标题（合并/母公司区分）
+    table_title = _extract_table_title(content)
+    title_prefix = f"【{table_title}】" if table_title else ""
+
     rows = []
     for line in content.split('\n'):
         line = line.strip()
@@ -268,9 +360,9 @@ def _extract_key_table_rows(content: str, page_num: int) -> List[str]:
             # 附加关联计算指标标签，提高检索召回率
             tags = _ROW_METRIC_TAGS.get(matched_kw, "")
             if tags:
-                row_text = f"【第{page_num}页财务数据 | 关联指标：{tags}】{compressed}"
+                row_text = f"{title_prefix}【第{page_num}页财务数据 | 关联指标：{tags}】{compressed}"
             else:
-                row_text = f"【第{page_num}页财务数据】{compressed}"
+                row_text = f"{title_prefix}【第{page_num}页财务数据】{compressed}"
             rows.append(row_text)
     return rows
 
@@ -307,6 +399,10 @@ def _is_table_content(content: str) -> bool:
 
 def _enhance_table_content(content: str, page_num: int) -> str:
     """增强表格内容的上下文信息，便于检索"""
+    # 提取表格标题（合并/母公司区分）
+    table_title = _extract_table_title(content)
+    title_prefix = f"【{table_title}】" if table_title else ""
+
     # 提取表格中的关键财务指标作为前缀
     indicators = []
 
@@ -330,8 +426,10 @@ def _enhance_table_content(content: str, page_num: int) -> str:
     unique_indicators = list(dict.fromkeys(indicators))[:10]
 
     if unique_indicators:
-        header = f"【第{page_num}页财务数据表，包含：{', '.join(unique_indicators)}】\n"
+        header = f"{title_prefix}【第{page_num}页财务数据表，包含：{', '.join(unique_indicators)}】\n"
         return header + content
+    elif title_prefix:
+        return f"{title_prefix}【第{page_num}页】\n" + content
 
     return content
 
@@ -545,6 +643,7 @@ def _expand_query(question: str) -> List[str]:
     """扩展查询词，提高中文财务术语的召回率。
 
     对包含特定财务关键词的问题，生成补充查询以检索同义/相关表格数据。
+    如果原查询包含"合并"限定词，扩展词也保留"合并"前缀，避免检索到母公司数据。
     """
     expansions = []
     term_map = {
@@ -569,12 +668,24 @@ def _expand_query(question: str) -> List[str]:
         "ROE": ["净资产收益率", "净利润", "所有者权益"],
     }
 
+    # 检测原查询是否包含"合并"限定词
+    has_consolidated = "合并" in question or "consolidated" in question.lower()
+
     q = question
     matched_keywords = []
     for keyword, related_terms in term_map.items():
         if keyword in q:
             matched_keywords.append(keyword)
             for term in related_terms:
+                # 如果原查询有"合并"但扩展词没有，补上"合并"前缀
+                if has_consolidated and "合并" not in term and "母公司" not in term:
+                    # 对适合加"合并"前缀的词（利润表相关科目）加上限定
+                    financial_items = ["营业收入", "营业成本", "营业总收入", "净利润", "利润总额",
+                                       "归母净利润", "归属于母公司所有者的净利润", "营业利润",
+                                       "资产总计", "负债合计", "所有者权益", "资产合计", "资产总额",
+                                       "负债总计", "股东权益", "营业净收入", "综合毛利率"]
+                    if term in financial_items:
+                        term = f"合并{term}"
                 expansions.append(term)
 
     # 如果匹配到多个关键词（如"资产周转率"同时匹配"总资产"和"资产周转率"），合并所有扩展
@@ -589,6 +700,12 @@ def _expand_query(question: str) -> List[str]:
         for keyword, related_terms in fuzzy_map.items():
             if keyword in q:
                 for term in related_terms:
+                    if has_consolidated and "合并" not in term and "母公司" not in term:
+                        financial_items = ["净利润", "毛利率", "净利率", "资产周转率",
+                                           "存货周转率", "总资产周转率", "资产负债率",
+                                           "流动比率", "速动比率", "每股收益", "EPS"]
+                        if term in financial_items:
+                            term = f"合并{term}"
                     expansions.append(term)
                 break
 
