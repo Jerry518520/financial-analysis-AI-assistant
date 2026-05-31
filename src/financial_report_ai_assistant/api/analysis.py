@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from financial_report_ai_assistant.services.rag_service import query_rag_with_source, RAG_NOT_FOUND, RAG_INDEX_MISSING, RAG_INDEX_BUILDING
+from financial_report_ai_assistant.services.rag_service import query_rag_with_source, RAG_NOT_FOUND, RAG_INDEX_MISSING, RAG_INDEX_BUILDING, get_current_pdf_hash
 from financial_report_ai_assistant.services.ai_chat import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -13,6 +13,11 @@ import re
 from financial_report_ai_assistant.api.utils import extract_cited_pages
 
 router = APIRouter()
+
+# 雷达图数据缓存：避免每次请求都重新提取，也保证数据一致性
+# key = pdf_hash, value = {"raw_data": dict, "industry": str, "ratios": dict}
+_radar_data_cache: dict = {}
+_radar_cache_lock = __import__('threading').Lock()
 
 def _extract_cited_pages(text: str) -> list:
     """从 LLM 回答中提取引用的页码（兼容旧调用）"""
@@ -149,16 +154,18 @@ class RadarRequest(BaseModel):
     industry: str = ""  # 空字符串表示自动识别
 
 RADAR_SEARCH_QUERIES = [
-    # 使用与对话接口相同的自然语言查询，确保检索到相同的 chunk
-    # 对话问"净利率是多少" → RAG 检索 → Agent 用 tool_calculate_margin 计算
-    # 雷达图用相同查询 → RAG 检索到相同 chunk → 提取原始数据 → Python 计算
-    "净利润 营业收入 归母净利润",
-    "营业收入 营业成本 毛利率",
-    "营业利润 利润总额",
-    "总资产 负债总额 净资产",
-    "流动资产 流动负债 存货 应收账款",
-    "经营活动现金流 利息费用",
-    "上期营业收入 上期净利润 增长率",
+    # 与对话接口保持一致的简单关键词查询，确保检索到相同的 chunk
+    # 对话的补充检索用的就是这些单个术语
+    "净利润",
+    "营业收入",
+    "营业成本",
+    "营业利润",
+    "总资产",
+    "负债总额",
+    "净资产",
+    "流动资产",
+    "流动负债",
+    "经营活动现金流",
     "主要财务数据和指标",
 ]
 
@@ -228,7 +235,22 @@ async def get_industries():
 @router.post("/analyze/radar")
 async def generate_radar_chart(request: RadarRequest):
     """生成能力雷达图数据"""
-    # 1. RAG 检索（跨查询去重，避免重复 chunk 浪费上下文预算）
+    # 0. 检查缓存（同一文档只提取一次，保证数据一致性）
+    pdf_hash = get_current_pdf_hash()
+    if pdf_hash:
+        with _radar_cache_lock:
+            cached = _radar_data_cache.get(pdf_hash)
+        if cached:
+            # 使用缓存的原始数据重新计算（允许用户切换行业重新评分）
+            from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+            industry = request.industry or cached["industry"]
+            result = compute_radar_scores(cached["ratios"], industry)
+            result["extracted_metrics"] = cached["ratios"]
+            result["source_pages"] = cached.get("source_pages", [])
+            result["cached"] = True
+            return result
+
+    # 1. RAG 检索（与对话接口一致的简单关键词查询）
     seen_chunks = set()
     unique_chunks = []
     all_source_pages = set()
@@ -317,6 +339,16 @@ async def generate_radar_chart(request: RadarRequest):
     result = compute_radar_scores(company_metrics, industry)
     result["extracted_metrics"] = company_metrics
     result["source_pages"] = sorted(all_source_pages)
+
+    # 缓存提取结果，后续请求直接复用（保证数据一致性）
+    if pdf_hash and raw_data:
+        with _radar_cache_lock:
+            _radar_data_cache[pdf_hash] = {
+                "raw_data": raw_data,
+                "industry": industry,
+                "ratios": company_metrics,
+                "source_pages": sorted(all_source_pages),
+            }
 
     return result
 

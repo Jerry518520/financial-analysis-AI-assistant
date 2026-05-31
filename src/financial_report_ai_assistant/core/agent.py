@@ -196,6 +196,12 @@ def tool_get_industry_benchmark(industry: str, metric: str) -> str:
     if result is None:
         available = list_industries()
         return f"未找到 {industry} 的 {metric} 基准数据。可用行业: {', '.join(available)}"
+    # result 现在是五档元组 (较差, 较低, 平均, 良好, 优秀)
+    if isinstance(result, tuple) and len(result) == 5:
+        poor, low, avg, good, excellent = result
+        return (f"{industry}行业 {metric} 五档参考值："
+                f"较差={poor}, 较低={low}, 平均={avg}, 良好={good}, 优秀={excellent}"
+                f"（注：此为近似参考值，非权威数据源）")
     return f"{industry}行业 {metric} 平均水平: {result}（注：此为近似参考值，非权威数据源）"
 
 
