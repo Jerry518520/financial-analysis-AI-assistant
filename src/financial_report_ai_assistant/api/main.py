@@ -25,7 +25,7 @@ from financial_report_ai_assistant.services.document_parser import parse_pdf_byt
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
 from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
-from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, clear_pending_state, RAG_NOT_FOUND, RAG_INDEX_BUILDING
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, clear_pending_state, RAG_NOT_FOUND, RAG_INDEX_MISSING, RAG_INDEX_BUILDING
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
 from financial_report_ai_assistant.api.utils import extract_cited_pages
