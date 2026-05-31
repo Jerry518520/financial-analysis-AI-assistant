@@ -421,14 +421,21 @@ def _validate_raw_data(raw: dict) -> dict:
 
 
 def _compute_ratios_from_raw(raw: dict) -> dict:
-    """从原始财务数据计算各项比率指标（Python 精确计算，替代 LLM 算术）。
+    """从原始财务数据计算各项比率指标。
 
+    使用与对话接口完全相同的 calculate_* 函数，保证计算结果一致。
     raw: LLM 提取的原始数据（金额，单位：元）
     返回: 与 compute_radar_scores 兼容的比率字典
     """
+    from financial_report_ai_assistant.services.financial_calculator import (
+        calculate_margin, calculate_roe, calculate_growth_rate,
+        calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
+        calculate_turnover, calculate_inventory_turnover, calculate_receivables_turnover,
+    )
+
     metrics = {}
 
-    # 盈利能力
+    # 原始数据提取
     营业收入 = raw.get("营业收入")
     营业成本 = raw.get("营业成本")
     净利润 = raw.get("净利润")
@@ -437,72 +444,74 @@ def _compute_ratios_from_raw(raw: dict) -> dict:
     成本费用总额 = raw.get("成本费用总额")
     总资产 = raw.get("总资产")
     净资产 = raw.get("净资产")
+    负债总额 = raw.get("负债总额")
     平均总资产 = raw.get("平均总资产") or 总资产
     平均净资产 = raw.get("平均净资产") or 净资产
-
-    metrics["毛利率"] = _safe_div(
-        (营业收入 - 营业成本) if (营业收入 and 营业成本) else None,
-        营业收入
-    )
-    metrics["净利率"] = _safe_div(净利润, 营业收入)
-    metrics["ROE"] = _safe_div(净利润, 平均净资产)
-    metrics["营业利润率"] = _safe_div(营业利润, 营业收入)
-    metrics["成本费用利润率"] = _safe_div(利润总额, 成本费用总额)
-
-    # 资产质量
     平均存货 = raw.get("平均存货") or raw.get("存货")
     平均应收账款 = raw.get("平均应收账款") or raw.get("应收账款")
-    经营活动现金流净额 = raw.get("经营活动现金流净额")
-
-    metrics["资产周转率"] = _safe_div(营业收入, 平均总资产)
-    metrics["存货周转率"] = _safe_div(营业成本, 平均存货)
-    metrics["应收账款周转率"] = _safe_div(营业收入, 平均应收账款)
-    metrics["现金回收率"] = _safe_div(经营活动现金流净额, 平均总资产)
-
-    # 债务风险
     流动资产 = raw.get("流动资产")
     流动负债 = raw.get("流动负债")
     存货 = raw.get("存货")
+    经营活动现金流净额 = raw.get("经营活动现金流净额")
     利息费用 = raw.get("利息费用")
     息税前利润 = raw.get("息税前利润")
-
-    metrics["资产负债率"] = _safe_div(raw.get("负债总额") or (总资产 - 净资产 if 总资产 and 净资产 else None), 总资产)
-    metrics["流动比率"] = _safe_div(流动资产, 流动负债)
-    metrics["速动比率"] = _safe_div(
-        (流动资产 - 存货) if (流动资产 is not None and 存货 is not None) else 流动资产,
-        流动负债
-    )
-    metrics["利息保障倍数"] = _safe_div(息税前利润, 利息费用)
-    metrics["现金流动负债比"] = _safe_div(经营活动现金流净额, 流动负债)
-
-    # 经营增长
     上期营业收入 = raw.get("上期营业收入")
     上期净利润 = raw.get("上期净利润")
     上期总资产 = raw.get("上期总资产")
     期初所有者权益 = raw.get("期初所有者权益")
 
-    metrics["营收增长率"] = _safe_div(
-        (营业收入 - 上期营业收入) if (营业收入 and 上期营业收入) else None,
-        上期营业收入
-    )
-    metrics["净利润增长率"] = _safe_div(
-        (净利润 - 上期净利润) if (净利润 and 上期净利润) else None,
-        上期净利润
-    )
-    metrics["总资产增长率"] = _safe_div(
-        (总资产 - 上期总资产) if (总资产 and 上期总资产) else None,
-        上期总资产
-    )
-    metrics["资本保值增值率"] = _safe_div(净资产, 期初所有者权益)
+    # ===== 盈利能力（与对话工具完全一致的计算函数） =====
+    if 营业收入 and 营业成本:
+        metrics["毛利率"] = calculate_margin(营业收入 - 营业成本, 营业收入)
+    if 净利润 and 营业收入:
+        metrics["净利率"] = calculate_margin(净利润, 营业收入)
+    if 净利润 and 平均净资产:
+        metrics["ROE"] = calculate_roe(净利润, 平均净资产, 期初所有者权益)
+    if 营业利润 and 营业收入:
+        metrics["营业利润率"] = calculate_margin(营业利润, 营业收入)
+    if 利润总额 and 成本费用总额:
+        metrics["成本费用利润率"] = calculate_margin(利润总额, 成本费用总额)
 
-    # Altman Z-Score 相关
+    # ===== 资产质量 =====
+    if 营业收入 and 平均总资产:
+        metrics["资产周转率"] = calculate_turnover(营业收入, 总资产, raw.get("上期总资产"))
+    if 营业成本 and 平均存货:
+        metrics["存货周转率"] = calculate_inventory_turnover(营业成本, raw.get("存货"), raw.get("平均存货"))
+    if 营业收入 and 平均应收账款:
+        metrics["应收账款周转率"] = calculate_receivables_turnover(营业收入, raw.get("应收账款"), raw.get("平均应收账款"))
+    if 经营活动现金流净额 and 平均总资产:
+        metrics["现金回收率"] = _safe_div(经营活动现金流净额, 平均总资产)
+
+    # ===== 债务风险 =====
+    effective负债 = 负债总额 or (总资产 - 净资产 if 总资产 and 净资产 else None)
+    if effective负债 and 总资产:
+        metrics["资产负债率"] = calculate_debt_ratio(effective负债, 总资产)
+    if 流动资产 and 流动负债:
+        metrics["流动比率"] = calculate_current_ratio(流动资产, 流动负债)
+    if 流动资产 is not None and 存货 is not None and 流动负债:
+        metrics["速动比率"] = calculate_quick_ratio(流动资产, 存货, 流动负债)
+    if 息税前利润 and 利息费用:
+        metrics["利息保障倍数"] = _safe_div(息税前利润, 利息费用)
+    if 经营活动现金流净额 and 流动负债:
+        metrics["现金流动负债比"] = _safe_div(经营活动现金流净额, 流动负债)
+
+    # ===== 经营增长 =====
+    if 营业收入 and 上期营业收入:
+        metrics["营收增长率"] = calculate_growth_rate(营业收入, 上期营业收入)
+    if 净利润 and 上期净利润:
+        metrics["净利润增长率"] = calculate_growth_rate(净利润, 上期净利润)
+    if 总资产 and 上期总资产:
+        metrics["总资产增长率"] = calculate_growth_rate(总资产, 上期总资产)
+    if 净资产 and 期初所有者权益:
+        metrics["资本保值增值率"] = _safe_div(净资产, 期初所有者权益)
+
+    # Altman Z-Score 相关（保留给 Z-Score 计算）
     留存收益 = raw.get("留存收益")
     营运资本 = raw.get("营运资本")
-
     metrics["营运资本比"] = _safe_div(营运资本, 总资产)
     metrics["留存收益比"] = _safe_div(留存收益, 总资产)
     metrics["EBIT资产比"] = _safe_div(息税前利润, 总资产)
-    metrics["权益负债比"] = _safe_div(净资产, raw.get("负债总额") or (总资产 - 净资产 if 总资产 and 净资产 else None))
+    metrics["权益负债比"] = _safe_div(净资产, effective负债)
 
     # 过滤掉 None 值
     return {k: v for k, v in metrics.items() if v is not None}
