@@ -240,44 +240,39 @@ def _has_significant_images(page, area_threshold: float = 0.1) -> bool:
 def _is_suspected_table_page(page, page_text: str = None) -> bool:
     """
     使用启发式规则判断页面是否可能包含无边框表格。
-    规则：
-    1. 关键词匹配（财报常见表头）
-    2. 数字密度检测（表格页通常包含大量数字）
+    规则（AND 逻辑，必须同时满足）：
+    1. 关键词匹配（仅限表格标题级别的术语，排除泛泛的财务词汇）
+    2. 数字密度检测（表格页通常包含大量对齐的数字）
     page_text: 可选，预提取的页面文本，避免重复调用 _get_page_text。
     """
     text = page_text if page_text is not None else _get_page_text(page)
 
-    # 1. 关键词列表 (中英文，覆盖常见财报表格)
+    # 1. 关键词列表 — 仅保留表格标题级别的术语
+    #    排除了 Equity/Revenue/Operating/Provision/Dividend/Cost 等
+    #    在普通段落文本中高频出现的泛泛词汇
     table_keywords = [
-        # 英文 — 三表 + 关键科目
-        "Consolidated Balance Sheet", "Consolidated Income Statement", "Cash Flow",
+        # 英文 — 三表标题 + 合并报表
+        "Consolidated Balance Sheet", "Consolidated Income Statement",
+        "Consolidated Statement", "Cash Flow Statement",
         "Balance Sheet", "Income Statement", "Statement of Financial Position",
         "Statement of Operations", "Statement of Comprehensive Income",
-        "Assets", "Liabilities", "Equity", "Revenue", "Cost", "Profit",
-        "Operating", "Investing", "Financing", "Depreciation", "Amortization",
-        "Accounts Receivable", "Accounts Payable", "Inventories", "Goodwill",
-        "Intangible", "Provision", "Impairment", "Dividend", "Earnings",
-        # 中文 — 三表 + 关键科目
+        "Statement of Changes", "Statement of Cash",
+        # 中文 — 三表标题 + 合并报表
         "合并资产负债表", "合并利润表", "合并现金流量表", "主要财务指标",
         "资产负债表", "利润表", "现金流量表", "所有者权益变动表",
-        "资产", "负债", "权益", "收入", "费用", "成本", "利润", "现金",
-        "应收", "应付", "存货", "固定资产", "无形资产", "商誉",
-        "减值", "折旧", "摊销", "分红", "股利", "营业收入", "营业成本",
+        "合并财务报表", "财务报表附注",
     ]
 
     has_keyword = any(kw in text for kw in table_keywords)
+    if not has_keyword:
+        return False  # 快速退出，避免不必要的数字计算
 
-    # 2. 数字密度检测
-    # 匹配像 1,234.56 或 2023 这样的数字
+    # 2. 数字密度检测（AND 逻辑：必须同时有关键词和足够的数字）
     digit_sequences = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b', text)
     valid_digits = [d for d in digit_sequences if len(d) > 1]
     has_enough_digits = len(valid_digits) > 15
 
-    # OR 逻辑：有关键词 或 数字密度足够高，都可能是表格页
-    if has_keyword or has_enough_digits:
-        return True
-
-    return False
+    return has_enough_digits
 
 
 def _extract_table_with_pymupdf(page, page_text: str = None, bordered_tables=None) -> str:
