@@ -6,6 +6,7 @@ import html as html_mod
 import base64
 import requests
 from typing import Dict, Any, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 # LlamaParse 可选依赖（免费额度有限，未配置 API Key 时自动跳过）
@@ -221,6 +222,7 @@ def _has_significant_images(page, area_threshold: float = 0.1) -> bool:
     page_area = page.rect.width * page.rect.height
     if page_area <= 0:
         return bool(images)  # 无法计算面积时保守处理
+    threshold_area = page_area * area_threshold
     total_image_area = 0.0
     for img in images:
         xref = img[0]
@@ -228,19 +230,22 @@ def _has_significant_images(page, area_threshold: float = 0.1) -> bool:
             rects = page.get_image_rects(xref)
             for rect in rects:
                 total_image_area += rect.width * rect.height
+                if total_image_area >= threshold_area:
+                    return True  # 提前退出，无需计算剩余图片
         except Exception:
             pass  # 某些图片无法获取位置，跳过
-    return (total_image_area / page_area) >= area_threshold
+    return False
 
 
-def _is_suspected_table_page(page) -> bool:
+def _is_suspected_table_page(page, page_text: str = None) -> bool:
     """
     使用启发式规则判断页面是否可能包含无边框表格。
     规则：
     1. 关键词匹配（财报常见表头）
     2. 数字密度检测（表格页通常包含大量数字）
+    page_text: 可选，预提取的页面文本，避免重复调用 _get_page_text。
     """
-    text = _get_page_text(page)
+    text = page_text if page_text is not None else _get_page_text(page)
 
     # 1. 关键词列表 (中英文，覆盖常见财报表格)
     table_keywords = [
@@ -275,7 +280,7 @@ def _is_suspected_table_page(page) -> bool:
     return False
 
 
-def _extract_table_with_pymupdf(page) -> str:
+def _extract_table_with_pymupdf(page, page_text: str = None, bordered_tables=None) -> str:
     """
     使用 PyMuPDF 提取页面中的表格内容，返回格式化的文本。
 
@@ -284,12 +289,15 @@ def _extract_table_with_pymupdf(page) -> str:
     2. 无边框表格：find_tables(text, text) —— 根据文本列对齐检测
     3. 文本块分析（启发式）
     4. 兜底：返回原始文本
+
+    page_text: 可选，预提取的页面文本，避免重复调用 _get_page_text。
+    bordered_tables: 可选，分类阶段缓存的有边框表格结果，避免重复 find_tables。
     """
-    text = _get_page_text(page)
+    text = page_text if page_text is not None else _get_page_text(page)
 
     # ---------- 1. 尝试有边框表格 ----------
     try:
-        tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
+        tables = bordered_tables if bordered_tables is not None else page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
         if tables.tables and _is_table_extraction_valid(tables.tables):
             result = _tables_to_markdown(tables.tables)
             if result and len(result) > len(text) * 0.3:
@@ -447,6 +455,7 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
         #   - 启发式疑似表格 → 直接送多模态
         #   - 有图片的页面 → 直接送多模态（不论文本多少，保证最佳精度）
         #   - 纯文本页 → PyMuPDF 本地提取
+        bordered_tables_cache = {}  # {page_index: TableFinder} 缓存有边框表格结果，避免提取阶段重复 find_tables
         for i, page in enumerate(doc):
             try:
                 # 先尝试 lines 策略（有边框表）—— PyMuPDF 对有边框表格提取可靠
@@ -459,7 +468,8 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
                             break
 
                 if has_bordered_table:
-                    # 有边框表格 → PyMuPDF 提取
+                    # 有边框表格 → PyMuPDF 提取，缓存表格结果供提取阶段复用
+                    bordered_tables_cache[i] = tables
                     table_pages_indices.append(i)
                 else:
                     # 再尝试 text 策略（无边框表）→ 直接送多模态
@@ -477,19 +487,24 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
                                 print(f"📋 Page {i+1} 检测到无边框表格，将送往多模态解析。")
                                 break
 
-                    # 启发式检测 → 也送多模态
-                    if not has_borderless_table and _is_suspected_table_page(page):
-                        print(f"👀 Page {i+1} 疑似包含无边框表格（启发式检测命中），将送往多模态解析。")
-                        has_borderless_table = True
+                    # 启发式检测 → 也送多模态（复用文本提取，避免 _get_page_text 重复调用）
+                    if not has_borderless_table:
+                        page_text = _get_page_text(page)
+                        if _is_suspected_table_page(page, page_text=page_text):
+                            print(f"👀 Page {i+1} 疑似包含无边框表格（启发式检测命中），将送往多模态解析。")
+                            has_borderless_table = True
+                    else:
+                        page_text = None  # 未提取过，后面按需提取
 
                     if has_borderless_table:
                         multimodal_page_indices.append(i)
                     else:
-                        # 普通页面：提取文本，检测图片
-                        text = _get_page_text(page)
+                        # 普通页面：提取文本（如果前面没提取过），检测图片
+                        if page_text is None:
+                            page_text = _get_page_text(page)
                         # 所有页面都先存入 text_pages_content 作为安全网
                         # 多模态处理成功后会覆盖，失败时保留原始文本
-                        text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+                        text_pages_content[i] = f"--- Page {i+1} ---\n{page_text}\n"
                         if _has_significant_images(page):
                             # 图片面积占比 > 10% → 送多模态（排除 logo、水印等小图）
                             print(f"🖼️ Page {i+1} 包含显著图片，将送往多模态解析。")
@@ -512,7 +527,10 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
 
             for idx in table_pages_indices:
                 page = doc[idx]
-                pymupdf_result = _extract_table_with_pymupdf(page)
+                # 复用分类阶段缓存的表格结果，避免重复 find_tables
+                pymupdf_result = _extract_table_with_pymupdf(
+                    page, bordered_tables=bordered_tables_cache.get(idx)
+                )
 
                 if _is_pymupdf_extraction_good(pymupdf_result) and not FORCE_LLAMA_PARSE:
                     print(f"✅ Page {idx+1}: PyMuPDF 提取成功")
@@ -532,19 +550,34 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
             if parser in ("kimi", "mimo"):
                 parse_fn = _parse_page_with_kimi if parser == "kimi" else _parse_page_with_mimo
                 label = "Kimi" if parser == "kimi" else "MiMo"
-                print(f"🔮 使用 {label} 多模态解析 {len(multimodal_page_indices)} 页（无边框表格/图片/质量不足的有边框表格）...")
+                print(f"🔮 使用 {label} 多模态并发解析 {len(multimodal_page_indices)} 页（无边框表格/图片/质量不足的有边框表格）...")
+
+                # 主线程预渲染所有页面为 PNG（fitz.Page 非线程安全，不能并发读取）
+                page_images = {}
                 for idx in multimodal_page_indices:
-                    page = doc[idx]
-                    img_bytes = _render_page_to_png(page)
+                    page_images[idx] = _render_page_to_png(doc[idx])
+
+                # 线程池并发调用多模态 API（纯 HTTP I/O，线程安全）
+                def _parse_single_page(idx):
+                    """线程池任务：调用多模态 API 解析单页。"""
+                    img_bytes = page_images[idx]
                     result = parse_fn(img_bytes, idx + 1)
-                    if result:
-                        multimodal_pages_content[idx] = f"--- Page {idx+1} ({label} Enhanced) ---\n{result}\n"
-                        print(f"✅ Page {idx+1}: {label} 解析成功")
-                    else:
-                        text = _get_page_text(page)
-                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：{label} 解析失败，已降级为原始文本]"
-                    if progress_callback:
-                        progress_callback(idx + 1, total_pages, f"多模态解析中 ({idx+1}/{total_pages})")
+                    return idx, result
+
+                completed = 0
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    futures = {executor.submit(_parse_single_page, idx): idx for idx in multimodal_page_indices}
+                    for future in as_completed(futures):
+                        idx, result = future.result()
+                        completed += 1
+                        if result:
+                            multimodal_pages_content[idx] = f"--- Page {idx+1} ({label} Enhanced) ---\n{result}\n"
+                            print(f"✅ Page {idx+1}: {label} 解析成功 ({completed}/{len(multimodal_page_indices)})")
+                        else:
+                            text = _get_page_text(doc[idx])
+                            text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：{label} 解析失败，已降级为原始文本]"
+                        if progress_callback:
+                            progress_callback(completed, len(multimodal_page_indices), f"多模态解析中 ({completed}/{len(multimodal_page_indices)})")
             else:
                 # LlamaParse
                 target_indices = multimodal_page_indices[:MAX_LLAMA_PAGES]
