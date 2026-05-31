@@ -359,25 +359,56 @@ def _tables_to_markdown(tables) -> str:
     return "\n\n".join(table_texts) if table_texts else ""
 
 
-def _is_table_extraction_valid(tables) -> bool:
+def _is_table_extraction_valid(tables, min_fill_ratio: float = 0.4, check_fragments: bool = False) -> bool:
     """校验 PyMuPDF 提取的表格质量（页面级别，所有表格都合格才通过）。
 
-    逐表检查：如果某个 table 中超过 20% 的 cell 含换行符，判定该 table 结构损坏。
-    任意一个 table 不合格，整页回退到原始文本（避免坏 table 污染数据）。
+    检查项：
+    1. 换行比例：超过 20% 的 cell 含换行符 → 结构损坏
+    2. 填充率：非空 cell 占比低于 min_fill_ratio → 不是真正的表格
+    3. 内容碎片化（仅 text 策略）：text 策略常把段落文本拆成单词碎片
+       （如 "technologica" + "l leadership" → 碎片率高则不是表格）
+    任意一个 table 不合格，整页回退到原始文本。
     """
     for tab in tables:
+        rows = tab.extract()
+        if not rows:
+            continue
+
         total_cells = 0
+        filled_cells = 0
         newline_cells = 0
-        for row in tab.extract():
-            if row:
-                for cell in row:
-                    if cell:
-                        total_cells += 1
-                        if '\n' in str(cell):
-                            newline_cells += 1
-        # 如果换行比例超过 20%，认为该 table 结构损坏
-        if total_cells > 0 and (newline_cells / total_cells) >= 0.2:
+        fragment_cells = 0
+
+        for row in rows:
+            if not row:
+                continue
+            for cell in row:
+                total_cells += 1
+                cell_str = str(cell).strip() if cell else ""
+                if not cell_str:
+                    continue
+                filled_cells += 1
+                if '\n' in cell_str:
+                    newline_cells += 1
+                # 碎片检测：以小写字母开头说明是被拆断的文本片段
+                if check_fragments and cell_str[0].islower() and cell_str[0].isalpha():
+                    fragment_cells += 1
+
+        if total_cells == 0:
             return False
+
+        # 换行比例超过 20% → 结构损坏
+        if (newline_cells / total_cells) >= 0.2:
+            return False
+
+        # 填充率过低 → 不是真正表格
+        if (filled_cells / total_cells) < min_fill_ratio:
+            return False
+
+        # 碎片率过高（仅 text 策略检查）→ 段落文本被拆成碎片
+        if check_fragments and filled_cells > 0 and (fragment_cells / filled_cells) > 0.25:
+            return False
+
     return True
 
 
@@ -475,7 +506,7 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
                         join_tolerance=3,
                     )
                     has_borderless_table = False
-                    if text_tables.tables and _is_table_extraction_valid(text_tables.tables):
+                    if text_tables.tables and _is_table_extraction_valid(text_tables.tables, check_fragments=True):
                         for tab in text_tables.tables:
                             if len(tab.cells) > 4:
                                 has_borderless_table = True
