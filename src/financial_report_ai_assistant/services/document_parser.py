@@ -209,6 +209,30 @@ def _render_page_to_png(page, dpi: int = 200) -> bytes:
     pix = page.get_pixmap(matrix=mat)
     return pix.tobytes("png")
 
+
+def _has_significant_images(page, area_threshold: float = 0.1) -> bool:
+    """
+    判断页面是否包含面积足够大的图片（排除 logo、水印等小图）。
+    area_threshold: 图片面积占页面面积的比例阈值，默认 10%。
+    """
+    images = page.get_images()
+    if not images:
+        return False
+    page_area = page.rect.width * page.rect.height
+    if page_area <= 0:
+        return bool(images)  # 无法计算面积时保守处理
+    total_image_area = 0.0
+    for img in images:
+        xref = img[0]
+        try:
+            rects = page.get_image_rects(xref)
+            for rect in rects:
+                total_image_area += rect.width * rect.height
+        except Exception:
+            pass  # 某些图片无法获取位置，跳过
+    return (total_image_area / page_area) >= area_threshold
+
+
 def _is_suspected_table_page(page) -> bool:
     """
     使用启发式规则判断页面是否可能包含无边框表格。
@@ -410,226 +434,167 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
         doc = fitz.open(stream=file_content, filetype="pdf")
         total_pages = len(doc)
         
-        table_pages_indices = []
-        image_pages_indices = []
-        text_pages_content = {} # {page_index: text_content}
+        table_pages_indices = []    # 有边框表格页 → PyMuPDF 提取
+        multimodal_page_indices = [] # 无边框表格 + 图片页 → 多模态解析
+        text_pages_content = {}      # {page_index: text_content} 纯文本页
 
         print(f"🕵️ 正在扫描 {total_pages} 页文档结构...")
         
-        # 2. 第一次扫描：分流 (Table Detection)
+        # 2. 第一次扫描：分流
+        # 分类策略：
+        #   - 有边框表格（lines 策略检测）→ PyMuPDF 本地提取（可靠）
+        #   - 无边框表格（text 策略检测）→ 直接送多模态（PyMuPDF 对无框表提取不可靠）
+        #   - 启发式疑似表格 → 直接送多模态
+        #   - 有图片的页面 → 直接送多模态（不论文本多少，保证最佳精度）
+        #   - 纯文本页 → PyMuPDF 本地提取
         for i, page in enumerate(doc):
-            # 使用 PyMuPDF 的 find_tables() 寻找表格
-            # strategy='lines' 适合财报这种有明显边框的表
-            # vertical_strategy='text' 辅助无框表
             try:
-                # 先尝试 lines 策略（有边框表）
+                # 先尝试 lines 策略（有边框表）—— PyMuPDF 对有边框表格提取可靠
                 tables = page.find_tables(horizontal_strategy='lines', vertical_strategy='lines')
+                has_bordered_table = False
+                if tables.tables and _is_table_extraction_valid(tables.tables):
+                    for tab in tables.tables:
+                        if len(tab.cells) > 4:
+                            has_bordered_table = True
+                            break
 
-                # 再尝试 text 策略（无边框表）
-                if not tables.tables:
-                    tables = page.find_tables(
+                if has_bordered_table:
+                    # 有边框表格 → PyMuPDF 提取
+                    table_pages_indices.append(i)
+                else:
+                    # 再尝试 text 策略（无边框表）→ 直接送多模态
+                    text_tables = page.find_tables(
                         vertical_strategy='text',
                         horizontal_strategy='text',
                         snap_tolerance=5,
                         join_tolerance=3,
                     )
+                    has_borderless_table = False
+                    if text_tables.tables and _is_table_extraction_valid(text_tables.tables):
+                        for tab in text_tables.tables:
+                            if len(tab.cells) > 4:
+                                has_borderless_table = True
+                                print(f"📋 Page {i+1} 检测到无边框表格，将送往多模态解析。")
+                                break
 
-                # 如果发现表格，且表格面积看起来不是误判，且结构质量合格
-                has_valid_table = False
-                if tables.tables and _is_table_extraction_valid(tables.tables):
-                    for tab in tables.tables:
-                        if len(tab.cells) > 4:
-                            has_valid_table = True
-                            break
+                    # 启发式检测 → 也送多模态
+                    if not has_borderless_table and _is_suspected_table_page(page):
+                        print(f"👀 Page {i+1} 疑似包含无边框表格（启发式检测命中），将送往多模态解析。")
+                        has_borderless_table = True
 
-                # 如果 PyMuPDF 两种策略都没检测到，尝试启发式检测
-                if not has_valid_table:
-                    if _is_suspected_table_page(page):
-                        print(f"👀 Page {i+1} 疑似包含无边框表格（启发式检测命中），将送往 LlamaParse。")
-                        has_valid_table = True
-
-                if has_valid_table:
-                    table_pages_indices.append(i)
-                else:
-                    # 普通页面：直接提取文本
-                    text = _get_page_text(page)
-                    # 检测页面是否包含图片/图表
-                    images = page.get_images()
-                    if images and len(text.strip()) < 50:
-                        # 图片页面文本很少，标记需要 LlamaParse 处理
-                        image_pages_indices.append(i)
-                        text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+                    if has_borderless_table:
+                        multimodal_page_indices.append(i)
                     else:
+                        # 普通页面：提取文本，检测图片
+                        text = _get_page_text(page)
+                        # 所有页面都先存入 text_pages_content 作为安全网
+                        # 多模态处理成功后会覆盖，失败时保留原始文本
                         text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
+                        if _has_significant_images(page):
+                            # 图片面积占比 > 10% → 送多模态（排除 logo、水印等小图）
+                            print(f"🖼️ Page {i+1} 包含显著图片，将送往多模态解析。")
+                            multimodal_page_indices.append(i)
             except Exception as e:
                 print(f"⚠️ Page {i+1} 检测出错: {e}, 降级为普通文本")
                 text = _get_page_text(page)
                 text_pages_content[i] = f"--- Page {i+1} ---\n{text}\n"
 
-        print(f"📊 扫描结果：发现 {len(table_pages_indices)} 页包含表格，{len(image_pages_indices)} 页包含图表/图片，{len(text_pages_content)} 页纯文本。")
+        print(f"📊 扫描结果：{len(table_pages_indices)} 页有边框表格（PyMuPDF），{len(multimodal_page_indices)} 页需多模态解析，{len(text_pages_content)} 页纯文本。")
         if progress_callback:
             progress_callback(0, total_pages, "结构扫描完成，开始解析页面")
 
-        # 3. 处理表格页面（优先 PyMuPDF，必要时 LlamaParse）
-        llama_pages_content = {} # {page_index: markdown_content}
-        pymupdf_table_pages = {} # {page_index: markdown_content}
-        
+        # 3. 处理有边框表格页面（PyMuPDF 本地提取，可靠）
+        multimodal_pages_content = {} # {page_index: markdown_content} 多模态解析结果
+        pymupdf_table_pages = {}      # {page_index: markdown_content} PyMuPDF 提取结果
+
         if table_pages_indices:
-            # 【新策略】先用 PyMuPDF 尝试提取表格
-            pages_need_llama = []  # 记录 PyMuPDF 处理效果不好的页面
-            
+            pages_need_multimodal = []  # PyMuPDF 质量不达标的有边框表格页也送多模态
+
             for idx in table_pages_indices:
                 page = doc[idx]
-                
-                # 尝试 PyMuPDF 提取
                 pymupdf_result = _extract_table_with_pymupdf(page)
-                
-                # 检查提取质量
+
                 if _is_pymupdf_extraction_good(pymupdf_result) and not FORCE_LLAMA_PARSE:
-                    # PyMuPDF 提取效果好，直接使用
                     print(f"✅ Page {idx+1}: PyMuPDF 提取成功")
                     pymupdf_table_pages[idx] = f"--- Page {idx+1} ---\n{pymupdf_result}\n"
                 else:
-                    # PyMuPDF 效果不好，标记为需要 LlamaParse
-                    print(f"⚠️ Page {idx+1}: PyMuPDF 效果不佳，将使用 LlamaParse")
-                    pages_need_llama.append(idx)
-            
-            # 对 PyMuPDF 效果不好的页面，使用外部解析引擎
-            if pages_need_llama:
-                if parser in ("kimi", "mimo"):
-                    # 多模态模型：逐页渲染为图片并解析，无页数限制
-                    parse_fn = _parse_page_with_kimi if parser == "kimi" else _parse_page_with_mimo
-                    label = "Kimi" if parser == "kimi" else "MiMo"
-                    print(f"🔮 使用 {label} 多模态解析 {len(pages_need_llama)} 页表格...")
-                    for idx in pages_need_llama:
-                        page = doc[idx]
-                        img_bytes = _render_page_to_png(page)
-                        result = parse_fn(img_bytes, idx + 1)
-                        if result:
-                            llama_pages_content[idx] = f"--- Page {idx+1} ({label} Enhanced) ---\n{result}\n"
-                        else:
-                            text = _get_page_text(page)
-                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-                        if progress_callback:
-                            progress_callback(idx + 1, total_pages, f"表格页解析中 ({idx+1}/{total_pages})")
-                else:
-                    # LlamaParse：限制页数
-                    target_indices = pages_need_llama[:MAX_LLAMA_PAGES]
-                    if len(pages_need_llama) > MAX_LLAMA_PAGES:
-                        print(f"⚠️ 需要 LlamaParse 的页面共 {len(pages_need_llama)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
-                        for idx in pages_need_llama[MAX_LLAMA_PAGES:]:
-                            page = doc[idx]
-                            text = _get_page_text(page)
-                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                    print(f"⚠️ Page {idx+1}: 有边框表格 PyMuPDF 效果不佳，转送多模态")
+                    # 先存 PyMuPDF 结果作为安全网，多模态成功后会被覆盖
+                    if pymupdf_result:
+                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{pymupdf_result}\n"
+                    pages_need_multimodal.append(idx)
 
-                    api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-                    if not api_key or not LLAMA_PARSE_AVAILABLE:
-                        print("⚠️ LlamaParse 不可用（缺少 API Key 或未安装），降级为 PyMuPDF 提取")
-                        for idx in target_indices:
-                            page = doc[idx]
-                            text = _get_page_text(page)
-                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-                    else:
-                        subset_filename = f"temp_tables_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
-                        new_doc = fitz.open()
-                        for idx in target_indices:
-                            new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
-                        new_doc.save(subset_filename)
-                        new_doc.close()
+            # 质量不达标的有边框表格页合并到多模态列表
+            multimodal_page_indices.extend(pages_need_multimodal)
 
-                        detected_lang = _detect_language(doc)
-                        print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页表格...")
-                        try:
-                            llama_parser = LlamaParse(result_type="markdown", premium_mode=False, language=detected_lang)
-                            documents = llama_parser.load_data(subset_filename)
-                            for idx, result_doc in enumerate(documents):
-                                if idx < len(target_indices):
-                                    original_page_idx = target_indices[idx]
-                                    llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
-                                else:
-                                    last_page_idx = target_indices[-1]
-                                    if last_page_idx in llama_pages_content:
-                                        llama_pages_content[last_page_idx] += f"\n{result_doc.text}\n"
-                            if len(documents) < len(target_indices):
-                                for i in range(len(documents), len(target_indices)):
-                                    original_page_idx = target_indices[i]
-                                    page = doc[original_page_idx]
-                                    text = _get_page_text(page)
-                                    pymupdf_table_pages[original_page_idx] = f"--- Page {original_page_idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-                        except Exception as e:
-                            print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
-                            for idx in target_indices:
-                                page = doc[idx]
-                                text = _get_page_text(page)
-                                pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
-
-                        if os.path.exists(subset_filename):
-                            try:
-                                os.remove(subset_filename)
-                            except OSError:
-                                pass
-
-        # 3b. 处理图片/图表页面
-        if image_pages_indices:
+        # 4. 统一处理所有需要多模态解析的页面（无边框表格 + 图片 + 质量不达标的有边框表格）
+        if multimodal_page_indices:
             if parser in ("kimi", "mimo"):
-                # 多模态模型：逐页渲染为图片并解析，无页数限制
                 parse_fn = _parse_page_with_kimi if parser == "kimi" else _parse_page_with_mimo
                 label = "Kimi" if parser == "kimi" else "MiMo"
-                print(f"🔮 使用 {label} 多模态解析 {len(image_pages_indices)} 页图表...")
-                for idx in image_pages_indices:
+                print(f"🔮 使用 {label} 多模态解析 {len(multimodal_page_indices)} 页（无边框表格/图片/质量不足的有边框表格）...")
+                for idx in multimodal_page_indices:
                     page = doc[idx]
                     img_bytes = _render_page_to_png(page)
                     result = parse_fn(img_bytes, idx + 1)
                     if result:
-                        llama_pages_content[idx] = f"--- Page {idx+1} ({label} 图表提取) ---\n{result}\n"
-                        print(f"✅ Page {idx+1}: {label} 图表提取成功")
+                        multimodal_pages_content[idx] = f"--- Page {idx+1} ({label} Enhanced) ---\n{result}\n"
+                        print(f"✅ Page {idx+1}: {label} 解析成功")
                     else:
                         text = _get_page_text(page)
-                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，{label} 解析失败]"
+                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：{label} 解析失败，已降级为原始文本]"
                     if progress_callback:
-                        progress_callback(idx + 1, total_pages, f"图表页解析中 ({idx+1}/{total_pages})")
+                        progress_callback(idx + 1, total_pages, f"多模态解析中 ({idx+1}/{total_pages})")
             else:
                 # LlamaParse
-                api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-                if not api_key or not LLAMA_PARSE_AVAILABLE:
-                    print(f"⚠️ LlamaParse 不可用（{len(image_pages_indices)} 页图表将保留原始文本）")
-                    for idx in image_pages_indices:
+                target_indices = multimodal_page_indices[:MAX_LLAMA_PAGES]
+                if len(multimodal_page_indices) > MAX_LLAMA_PAGES:
+                    print(f"⚠️ 需要多模态解析的页面共 {len(multimodal_page_indices)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
+                    for idx in multimodal_page_indices[MAX_LLAMA_PAGES:]:
                         page = doc[idx]
                         text = _get_page_text(page)
-                        text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，缺少 API Key 无法自动提取]"
-                else:
-                    target_image_indices = image_pages_indices[:MAX_LLAMA_PAGES]
-                    if len(image_pages_indices) > MAX_LLAMA_PAGES:
-                        print(f"⚠️ 图表页面共 {len(image_pages_indices)} 页，只处理前 {MAX_LLAMA_PAGES} 页")
+                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
 
-                    subset_filename = f"temp_images_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
+                api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+                if not api_key or not LLAMA_PARSE_AVAILABLE:
+                    print("⚠️ LlamaParse 不可用（缺少 API Key 或未安装），降级为 PyMuPDF 提取")
+                    for idx in target_indices:
+                        page = doc[idx]
+                        text = _get_page_text(page)
+                        pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                else:
+                    subset_filename = f"temp_multimodal_{hashlib.md5(file_content).hexdigest()[:8]}.pdf"
                     new_doc = fitz.open()
-                    for idx in target_image_indices:
+                    for idx in target_indices:
                         new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
                     new_doc.save(subset_filename)
                     new_doc.close()
 
-                    print(f"💸 正在调用 LlamaParse 处理 {len(target_image_indices)} 页图表...")
                     detected_lang = _detect_language(doc)
+                    print(f"💸 正在调用 LlamaParse 处理 {len(target_indices)} 页...")
                     try:
                         llama_parser = LlamaParse(result_type="markdown", premium_mode=True, language=detected_lang)
                         documents = llama_parser.load_data(subset_filename)
                         for idx, result_doc in enumerate(documents):
-                            if idx < len(target_image_indices):
-                                original_page_idx = target_image_indices[idx]
-                                llama_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse 图表提取) ---\n{result_doc.text}\n"
-                        if len(documents) < len(target_image_indices):
-                            for i in range(len(documents), len(target_image_indices)):
-                                original_page_idx = target_image_indices[i]
+                            if idx < len(target_indices):
+                                original_page_idx = target_indices[idx]
+                                multimodal_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} (LlamaParse Enhanced) ---\n{result_doc.text}\n"
+                            else:
+                                last_page_idx = target_indices[-1]
+                                if last_page_idx in multimodal_pages_content:
+                                    multimodal_pages_content[last_page_idx] += f"\n{result_doc.text}\n"
+                        if len(documents) < len(target_indices):
+                            for i in range(len(documents), len(target_indices)):
+                                original_page_idx = target_indices[i]
                                 page = doc[original_page_idx]
                                 text = _get_page_text(page)
-                                text_pages_content[original_page_idx] = f"--- Page {original_page_idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 仅返回部分结果]"
+                                pymupdf_table_pages[original_page_idx] = f"--- Page {original_page_idx+1} (PyMuPDF Fallback) ---\n{text}\n"
                     except Exception as e:
-                        print(f"⚠️ LlamaParse 图表提取失败: {e}，保留原始文本")
-                        for idx in target_image_indices:
+                        print(f"⚠️ LlamaParse 调用失败: {e}，降级为 PyMuPDF")
+                        for idx in target_indices:
                             page = doc[idx]
                             text = _get_page_text(page)
-                            text_pages_content[idx] = f"--- Page {idx+1} ---\n{text}\n[注：本页包含图片/图表，LlamaParse 提取失败]"
+                            pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
 
                     if os.path.exists(subset_filename):
                         try:
@@ -638,11 +603,11 @@ def parse_pdf_bytes(file_content: bytes, parser: str = "llamaparse", progress_ca
                             pass
 
         # 4. 合并所有内容 (按页码顺序)
-        # 优先级：LlamaParse > PyMuPDF 表格 > 纯文本
+        # 优先级：多模态解析 > PyMuPDF 表格 > 纯文本
         final_full_text = []
         for i in range(total_pages):
-            if i in llama_pages_content:
-                final_full_text.append(llama_pages_content[i])
+            if i in multimodal_pages_content:
+                final_full_text.append(multimodal_pages_content[i])
             elif i in pymupdf_table_pages:
                 final_full_text.append(pymupdf_table_pages[i])
             elif i in text_pages_content:
