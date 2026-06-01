@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>洞察者 AI - 智能财报分析助手</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0A2342',    // 深蓝主色
+                        secondary: '#D4AF37',  // 金色辅助色
+                        neutral: '#F5F7FA',    // 浅灰背景色
+                        dark: '#1E293B',       // 深灰文本色
+                    },
+                    fontFamily: {
+                        sans: ['"Microsoft YaHei"', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #F5F7FA; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Markdown 表格样式优化 */
+        .markdown-body table { width: 100%; border-collapse: collapse; margin-top: 0.5em; font-size: 0.85rem; }
+        .markdown-body th { background-color: #f1f5f9; padding: 10px; border: 1px solid #e2e8f0; color: #0A2342; font-weight: bold; text-align: left;}
+        .markdown-body td { padding: 10px; border: 1px solid #e2e8f0; color: #475569; }
+        .markdown-body tr:hover td { background-color: #f8fafc; }
+        
+        /* 预设问题动画 */
+        .tab-content { display: none; animation: fadeIn 0.2s ease-in-out; }
+        .tab-content.active { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    </style>
+</head>
+<body class="bg-neutral text-dark min-h-screen flex flex-col font-sans">
+
+    <div id="imageModal" class="fixed inset-0 z-[100] hidden bg-black/85 backdrop-blur-sm flex items-center justify-center p-6 cursor-zoom-out transition-opacity duration-300" onclick="closeImageModal()">
+        <img id="modalImage" src="" class="max-w-full max-h-full object-contain rounded shadow-2xl transition-transform duration-300 scale-95" alt="大图预览">
+        <div class="absolute top-4 right-6 text-white text-3xl opacity-70 hover:opacity-100 cursor-pointer"><i class="fa-solid fa-xmark"></i></div>
+    </div>
+
+    <header class="bg-primary text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-secondary rounded-lg flex items-center justify-center text-primary text-xl font-bold shadow-lg">
+                    <i class="fa-solid fa-chart-line"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-wide">洞察者 AI</h1>
+                    <p class="text-xs text-secondary/80 mt-0.5">基于 RAG + Agent 的智能财报分析助手 · DeepSeek 驱动</p>
+                </div>
+            </div>
+            <div class="text-sm text-gray-300 flex items-center gap-2">
+                <i class="fa-solid fa-circle text-green-400 text-[10px]"></i> 服务运行中
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        <aside class="lg:col-span-3 flex flex-col gap-6">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <h2 class="text-primary font-bold text-lg mb-4 border-b border-gray-100 pb-2">
+                    <i class="fa-solid fa-file-pdf text-secondary mr-2"></i>上传财报
+                </h2>
+                <input type="file" id="fileInput" accept="application/pdf" class="hidden">
+                <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-secondary transition-colors cursor-pointer bg-neutral mb-4">
+                    <i class="fa-solid fa-cloud-arrow-up text-3xl text-gray-400 mb-2" id="uploadIcon"></i>
+                    <p class="text-sm text-dark font-medium" id="uploadText">点击或拖拽 PDF 文件至此</p>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="block text-xs text-gray-500 mb-1">选择解析引擎</label>
+                    <select id="parserSelect" class="w-full bg-neutral border border-gray-200 text-dark text-sm rounded-lg p-2.5 focus:outline-none focus:border-primary">
+                        <option value="llamaparse">📄 LlamaParse (默认)</option>
+                        <option value="kimi">🔮 Kimi 多模态</option>
+                        <option value="mimo">🤖 MiMo 多模态</option>
+                    </select>
+                </div>
+
+                <button id="uploadBtn" class="w-full bg-primary hover:bg-[#0f3460] text-white font-bold py-2.5 rounded-lg transition-all shadow-md flex items-center justify-center gap-2">
+                    🚀 开始解析
+                </button>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <h3 class="text-sm text-gray-500 mb-2">当前解析状态</h3>
+                <div class="flex items-center gap-2 text-dark font-medium bg-neutral p-3 rounded-lg border border-gray-200" id="currentFileStatus">
+                    <i class="fa-solid fa-circle-info text-gray-400"></i>
+                    <span class="truncate text-sm text-gray-400" id="currentFileName">尚未上传文件</span>
+                </div>
+                <div id="progressContainer" class="mt-4 hidden">
+                    <div class="flex justify-between text-xs mb-1">
+                        <span class="text-primary font-medium" id="progressText">正在解析...</span>
+                        <span class="text-primary font-bold" id="progressPct">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-1.5">
+                        <div id="progressBar" class="bg-secondary h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <section class="lg:col-span-9 flex flex-col gap-6 relative">
+            
+            <div id="workspaceOverlay" class="absolute inset-0 bg-neutral/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-xl border border-gray-200">
+                <i class="fa-solid fa-lock text-4xl text-gray-300 mb-4"></i>
+                <h3 class="text-xl font-bold text-gray-500">请先在左侧上传财报</h3>
+                <p class="text-sm text-gray-400 mt-2">上传并解析完成后即可解锁智能分析与对话功能</p>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col">
+                <div class="flex items-center justify-between mb-4 border-b border-gray-100 pb-3">
+                    <h2 class="text-primary font-bold text-xl">
+                        <i class="fa-solid fa-brain text-secondary mr-2"></i>智能分析报告
+                    </h2>
+                    <div class="flex items-center gap-3">
+                        <select id="industrySelect" class="bg-neutral border border-gray-200 text-sm rounded-lg p-1.5 focus:outline-none max-w-[150px] truncate">
+                            <option value="">自动识别行业</option>
+                            <option value="制造业">制造业</option>
+                            <option value="科技/互联网">科技/互联网</option>
+                            <option value="金融业">金融业</option>
+                        </select>
+                        <button id="generateSummaryBtn" class="bg-secondary hover:bg-[#c4a133] text-white text-sm px-4 py-1.5 rounded-lg shadow transition-colors flex items-center gap-2">
+                            <span>✨ 生成核心摘要</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-neutral rounded-lg flex items-center justify-center p-2 border border-gray-200 h-[380px] relative">
+                        <div id="echartsRadar" class="w-full h-full hidden"></div>
+                        <div class="text-center text-gray-400 absolute" id="radarPlaceholder">
+                            <i class="fa-solid fa-chart-pie text-3xl mb-2"></i>
+                            <p class="text-sm">点击上方按钮生成企业绩效评价</p>
+                        </div>
+                    </div>
+                    <div class="bg-neutral rounded-lg p-5 border border-gray-200 text-sm text-dark overflow-y-auto h-[380px] markdown-body" id="summaryContent">
+                        <div class="h-full flex items-center justify-center text-gray-400">等待生成财报核心要点...</div>
+                    </div>
+                </div>
+
+                <div class="mt-4 border border-gray-200 rounded-lg overflow-hidden hidden" id="detailsAccordion">
+                    <button class="w-full bg-gray-50 hover:bg-gray-100 text-primary px-4 py-3 flex justify-between items-center transition-colors text-sm font-bold" onclick="toggleDetails()">
+                        <span class="flex items-center gap-2"><i class="fa-solid fa-table-list text-secondary"></i> 各维度评分明细表</span>
+                        <i id="detailsIcon" class="fa-solid fa-chevron-down transition-transform"></i>
+                    </button>
+                    <div id="detailsContent" class="hidden p-4 bg-white border-t border-gray-200 markdown-body">
+                        </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 flex-1 flex flex-col min-h-[500px]">
+                <div class="p-4 border-b border-gray-100 bg-gray-50 rounded-t-xl">
+                    <h2 class="text-primary font-bold text-lg mb-3">
+                        <i class="fa-regular fa-comments text-secondary mr-2"></i>对话 DeepSeek
+                    </h2>
+                    
+                    <div class="flex flex-col gap-3">
+                        <div class="flex gap-2 overflow-x-auto pb-1" id="categoryTabs">
+                            <button class="cat-tab px-3 py-1 rounded text-xs font-bold transition-colors bg-primary text-white" data-target="cat-basic">📊 基础数据</button>
+                            <button class="cat-tab px-3 py-1 rounded text-xs font-bold transition-colors bg-gray-200 text-gray-600 hover:bg-gray-300" data-target="cat-profit">📈 盈利能力</button>
+                            <button class="cat-tab px-3 py-1 rounded text-xs font-bold transition-colors bg-gray-200 text-gray-600 hover:bg-gray-300" data-target="cat-growth">📉 成长能力</button>
+                            <button class="cat-tab px-3 py-1 rounded text-xs font-bold transition-colors bg-gray-200 text-gray-600 hover:bg-gray-300" data-target="cat-debt">🏦 偿债能力</button>
+                            <button class="cat-tab px-3 py-1 rounded text-xs font-bold transition-colors bg-gray-200 text-gray-600 hover:bg-gray-300" data-target="cat-op">🔄 运营能力</button>
+                            <button class="cat-tab px-3 py-1 rounded text-xs font-bold transition-colors bg-gray-200 text-gray-600 hover:bg-gray-300" data-target="cat-comp">🔍 综合分析</button>
+                        </div>
+                        
+                        <div class="bg-white p-3 rounded border border-gray-100 min-h-[48px]">
+                            <div id="cat-basic" class="tab-content active">
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">营收是多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">净利润是多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">公司总资产是多少？</button>
+                            </div>
+                            <div id="cat-profit" class="tab-content">
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">毛利率是多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">净利率是多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">ROE(净资产收益率)是多少？</button>
+                            </div>
+                            <div id="cat-growth" class="tab-content">
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">净利润同比增长了多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">营收同比增长了多少？</button>
+                            </div>
+                            <div id="cat-debt" class="tab-content">
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">资产负债率是多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">流动比率是多少？</button>
+                            </div>
+                            <div id="cat-op" class="tab-content">
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">资产周转率是多少？</button>
+                                <button class="preset-btn text-xs border border-primary text-primary hover:bg-primary hover:text-white rounded-full px-3 py-1 transition-colors">存货周转率是多少？</button>
+                            </div>
+                            <div id="cat-comp" class="tab-content">
+                                <button class="preset-btn text-xs border border-secondary text-secondary hover:bg-secondary hover:text-white rounded-full px-3 py-1 transition-colors">公司的盈利能力强吗？</button>
+                                <button class="preset-btn text-xs border border-secondary text-secondary hover:bg-secondary hover:text-white rounded-full px-3 py-1 transition-colors">公司面临哪些主要风险？</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex-1 p-6 overflow-y-auto space-y-6 bg-white" id="chatContainer">
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-white font-bold shrink-0 shadow-sm"><i class="fa-solid fa-robot"></i></div>
+                        <div class="bg-neutral border border-gray-200 text-dark text-sm p-4 rounded-xl rounded-tl-none shadow-sm leading-relaxed">
+                            您好！我是洞察者 AI，已准备好为您解读财报。您可以直接在下方提问，或点击上方的分类选择预设问题。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="p-4 border-t border-gray-100 bg-gray-50 rounded-b-xl">
+                    <div class="relative flex items-center">
+                        <input type="text" id="chatInput" placeholder="基于当前财报提问 (按 Enter 发送)..." class="w-full bg-white border border-gray-300 text-sm rounded-full pl-5 pr-12 py-3 focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary shadow-sm transition-all disabled:bg-gray-100">
+                        <button id="sendBtn" class="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-secondary hover:bg-[#c4a133] text-white rounded-full flex justify-center items-center transition-transform hover:scale-105 shadow disabled:opacity-50 disabled:hover:scale-100"><i class="fa-solid fa-paper-plane text-sm"></i></button>
+                    </div>
+                    <div class="text-center mt-2">
+                        <p class="text-[10px] text-gray-400">AI 生成内容可能存在误差，请以财报原文为准。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        let currentPdfHash = "";
+        let chatHistory = [];
+        let isProcessingChat = false;
+        let echartsInstance = null;
+
+        // 图片模态框 (双击放大)
+        window.openImageModal = (src) => {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modalImg.src = src;
+            modal.classList.remove('hidden');
+            setTimeout(() => modalImg.classList.remove('scale-95'), 10);
+        };
+        window.closeImageModal = () => {
+            document.getElementById('modalImage').classList.add('scale-95');
+            setTimeout(() => document.getElementById('imageModal').classList.add('hidden'), 200);
+        };
+
+        // Tab 切换逻辑
+        document.querySelectorAll('.cat-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                document.querySelectorAll('.cat-tab').forEach(t => {
+                    t.classList.remove('bg-primary', 'text-white');
+                    t.classList.add('bg-gray-200', 'text-gray-600');
+                });
+                e.target.classList.remove('bg-gray-200', 'text-gray-600');
+                e.target.classList.add('bg-primary', 'text-white');
+                
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                document.getElementById(e.target.dataset.target).classList.add('active');
+            });
+        });
+
+        // 评分明细折叠面板
+        window.toggleDetails = () => {
+            const content = document.getElementById('detailsContent');
+            const icon = document.getElementById('detailsIcon');
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                icon.style.transform = 'rotate(180deg)';
+            } else {
+                content.classList.add('hidden');
+                icon.style.transform = 'rotate(0deg)';
+            }
+        };
+
+        // 渲染明细表格的函数
+        const renderDetailsTable = (dimensions) => {
+            if (!dimensions || dimensions.length === 0) return;
+            const container = document.getElementById('detailsAccordion');
+            const content = document.getElementById('detailsContent');
+            
+            let markdownTable = `| 指标名称 | 公司当前值 | 行业基准 | 单项得分 |\n|---|---|---|---|\n`;
+            
+            dimensions.forEach(dim => {
+                markdownTable += `| **【${dim.name}】综合得分：${dim.score.toFixed(1)}** | | | |\n`;
+                if (dim.detail && dim.detail.length > 0) {
+                    dim.detail.forEach(item => {
+                        const isPct = ['毛利率', '净利率', 'ROE', '资产负债率', '增长率', '现金回收率', '资本保值'].some(k => item.name.includes(k));
+                        const formatVal = (v) => v === null ? '-' : (isPct ? (v*100).toFixed(2)+'%' : v.toFixed(2));
+                        markdownTable += `| ${item.name} | ${formatVal(item.company)} | ${formatVal(item.benchmark)} | ${item.score.toFixed(1)} |\n`;
+                    });
+                }
+            });
+            
+            content.innerHTML = marked.parse(markdownTable);
+            container.classList.remove('hidden'); 
+        };
+
+        // 辅助工具函数
+        const scrollToBottom = (el) => { el.scrollTop = el.scrollHeight; };
+        const escapeHtml = (unsafe) => { return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); };
+        const extractHistoryForApi = () => {
+            const apiHistory = [];
+            for (let i = 0; i < chatHistory.length - 1; i += 2) {
+                if (chatHistory[i].role === 'user' && chatHistory[i+1].role === 'assistant') {
+                    apiHistory.push([chatHistory[i].content, chatHistory[i+1].content.substring(0, 500)]);
+                }
+            }
+            return apiHistory.slice(-5);
+        };
+
+        // --- 文件上传逻辑 ---
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-secondary'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-secondary'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-secondary');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                document.getElementById('uploadText').innerText = `已选择: ${e.dataTransfer.files[0].name}`;
+            }
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) document.getElementById('uploadText').innerText = `已选择: ${fileInput.files[0].name}`;
+        });
+
+        uploadBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) return alert("请先选择 PDF 文件");
+            
+            document.getElementById('progressContainer').classList.remove('hidden');
+            uploadBtn.disabled = true;
+
+            const formData = new FormData(); 
+            formData.append("file", file);
+            try {
+                const res = await fetch(`${API_URL}/upload?parser=${document.getElementById('parserSelect').value}`, { method: "POST", body: formData });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "上传失败");
+                pollStatus(data.job_id, file.name);
+            } catch (err) { 
+                alert(`上传错误: ${err.message}`); 
+                uploadBtn.disabled = false; 
+                document.getElementById('progressContainer').classList.add('hidden');
+            }
+        });
+
+        const pollStatus = (jobId, filename) => {
+            const interval = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_URL}/status/${jobId}`);
+                    const job = await res.json();
+                    
+                    if (job.status === "done") {
+                        clearInterval(interval);
+                        document.getElementById('progressBar').style.width = "100%";
+                        document.getElementById('progressPct').innerText = "100%";
+                        document.getElementById('progressText').innerText = "✅ 解析完成！";
+
+                        currentPdfHash = job.result.pdf_hash || "";
+                        document.getElementById('currentFileName').innerText = filename;
+                        document.getElementById('currentFileStatus').querySelector('i').className = "fa-solid fa-file-invoice text-secondary";
+                        
+                        document.getElementById('workspaceOverlay').classList.add('hidden');
+                        uploadBtn.disabled = false;
+                        chatHistory = []; // 换文件清空对话
+                        setTimeout(() => document.getElementById('progressContainer').classList.add('hidden'), 3000);
+                    } else if (job.status === "processing") {
+                        const progText = job.progress || "解析中...";
+                        document.getElementById('progressText').innerText = `🔍 ${progText}`;
+                        const match = progText.match(/\((\d+)\/(\d+)\)/);
+                        if (match) {
+                            const pct = Math.min(95, 10 + 85 * (parseInt(match[1]) / Math.max(parseInt(match[2]), 1)));
+                            document.getElementById('progressBar').style.width = `${pct}%`;
+                            document.getElementById('progressPct').innerText = `${Math.floor(pct)}%`;
+                        }
+                    } else if (job.status === "error") {
+                        throw new Error(job.error || "未知错误");
+                    }
+                } catch(err) {
+                    clearInterval(interval);
+                    alert(`查询状态失败: ${err.message}`);
+                    uploadBtn.disabled = false;
+                }
+            }, 3000);
+        };
+
+        // --- 摘要与雷达图逻辑 ---
+        document.getElementById('generateSummaryBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('generateSummaryBtn');
+            btn.disabled = true; 
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 生成中...';
+            
+            const indSelect = document.getElementById('industrySelect');
+            const industryVal = indSelect.value;
+
+            const summaryReq = fetch(`${API_URL}/analyze/summary`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({focus: "general"}) });
+            const radarReq = fetch(`${API_URL}/analyze/radar`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({industry: industryVal}) });
+
+            try {
+                const [sumRes, radRes] = await Promise.all([summaryReq, radarReq]);
+                if (sumRes.ok) {
+                    const sumData = await sumRes.json();
+                    document.getElementById('summaryContent').innerHTML = marked.parse(sumData.summary);
+                } else {
+                    document.getElementById('summaryContent').innerHTML = `<span class="text-red-500">摘要生成失败</span>`;
+                }
+                
+                if (radRes.ok) {
+                    const radData = await radRes.json();
+                    renderRadarChart(radData);
+                    renderDetailsTable(radData.dimensions); 
+                    
+                    // 自动识别行业的反馈逻辑复原
+                    if (radData.industry) {
+                        const optionsArray = Array.from(indSelect.options).map(o => o.value);
+                        if (optionsArray.includes(radData.industry)) {
+                            indSelect.value = radData.industry;
+                        } else {
+                            indSelect.options[0].text = `自动识别: ${radData.industry}`;
+                        }
+                    }
+                }
+            } catch (err) { 
+                console.error(err); 
+            } finally { 
+                btn.disabled = false; 
+                btn.innerHTML = '✨ 生成核心摘要'; 
+            }
+        });
+
+        // 带有 ABCD 评级徽章的雷达图 (完整版)
+        const renderRadarChart = (data) => {
+            if (!data || !data.dimensions) return;
+            document.getElementById('radarPlaceholder').style.display = 'none';
+            document.getElementById('echartsRadar').style.display = 'block';
+            if (!echartsInstance) echartsInstance = echarts.init(document.getElementById('echartsRadar'));
+
+            const indicator = data.dimensions.map(d => ({ 
+                name: `${d.name}|${d.grade || 'C'}`, 
+                max: 100 
+            }));
+            const values = data.dimensions.map(d => d.score);
+            const composite = data.composite_score.toFixed(0);
+
+            const option = {
+                title: {
+                    text: `{score|${composite}}{unit| 分} / ${data.composite_grade}级`,
+                    subtext: '综合能力评级',
+                    left: 'center', 
+                    top: '2%', // 【修改点1】：将标题稍微再往上提一点
+                    textStyle: { rich: { score: { fontSize: 26, fontWeight: '900', color: '#D4AF37' }, unit: { fontSize: 14, color: '#D4AF37', fontWeight: 'normal' } }, color: '#D4AF37', fontSize: 16, fontWeight: 'bold' },
+                    subtextStyle: { color: '#64748b', fontSize: 12, marginTop: 4 }
+                },
+                radar: {
+                    indicator: indicator,
+                    center: ['50%', '63%'], // 【修改点2】：将雷达图中心点整体下移
+                    radius: '50%',          // 【修改点3】：适当缩小雷达图半径，腾出顶部空间
+                    splitNumber: 5,
+                    axisName: {
+                        formatter: function (value) {
+                            const [name, grade] = value.split('|');
+                            return `{name|${name}}\n{grade${grade}|${grade} 级}`;
+                        },
+                        rich: {
+                            name: { color: '#1E293B', fontSize: 13, fontWeight: 'bold', align: 'center', padding: [0, 0, 5, 0] },
+                            gradeA: { color: '#fff', backgroundColor: '#D4AF37', padding: [3, 8], borderRadius: 4, fontSize: 11, align: 'center', fontWeight: 'bold' },
+                            gradeB: { color: '#fff', backgroundColor: '#00d4aa', padding: [3, 8], borderRadius: 4, fontSize: 11, align: 'center', fontWeight: 'bold' },
+                            gradeC: { color: '#fff', backgroundColor: '#4fc3f7', padding: [3, 8], borderRadius: 4, fontSize: 11, align: 'center', fontWeight: 'bold' },
+                            gradeD: { color: '#fff', backgroundColor: '#ffb74d', padding: [3, 8], borderRadius: 4, fontSize: 11, align: 'center', fontWeight: 'bold' },
+                            gradeE: { color: '#fff', backgroundColor: '#ef5350', padding: [3, 8], borderRadius: 4, fontSize: 11, align: 'center', fontWeight: 'bold' }
+                        }
+                    },
+                    splitArea: { areaStyle: { color: ['rgba(245,247,250,0.8)', 'rgba(245,247,250,0.4)'] } },
+                    axisLine: { lineStyle: { color: 'rgba(0,0,0,0.1)' } },
+                    splitLine: { lineStyle: { color: 'rgba(0,0,0,0.1)' } }
+                },
+                series: [{
+                    type: 'radar',
+                    data: [{ value: values, name: '企业评分', itemStyle: { color: '#D4AF37' }, areaStyle: { color: 'rgba(212, 175, 55, 0.3)' }, lineStyle: { width: 2, color: '#D4AF37' } }]
+                }]
+            };
+            echartsInstance.setOption(option);
+            window.addEventListener('resize', () => echartsInstance.resize());
+        };
+
+        // --- 聊天对话逻辑 (已彻底找回溯源按钮和推荐问题) ---
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const chatContainer = document.getElementById('chatContainer');
+
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (isProcessingChat) return;
+                sendChatMessage(btn.innerText);
+            });
+        });
+
+        sendBtn.addEventListener('click', () => {
+            if (chatInput.value.trim() && !isProcessingChat) sendChatMessage(chatInput.value.trim());
+        });
+
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && chatInput.value.trim() && !isProcessingChat) sendChatMessage(chatInput.value.trim());
+        });
+
+        // 核心复原：全量的消息替换函数
+        const replaceLoadingWithMessage = (id, aiMsg, sourcePages, recommendations) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+
+            let cleanMsg = aiMsg.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?p>/gi, '\n');
+            const markdownHtml = marked.parse(cleanMsg);
+
+            let sourcesHtml = '';
+            if (sourcePages && sourcePages.length > 0) {
+                const validPages = sourcePages.filter(p => p !== null);
+                if (validPages.length > 0) {
+                    sourcesHtml = `
+                        <div class="mt-3 border-t border-gray-200 pt-3">
+                            <button onclick="toggleSource(this, [${validPages.join(',')}])" class="text-xs text-secondary hover:text-[#b08d27] flex items-center gap-1 font-medium bg-secondary/10 px-2 py-1 rounded transition-colors">
+                                <i class="fa-regular fa-file-image"></i> 查看来源 (第 ${validPages.join('、')} 页)
+                            </button>
+                            <div class="source-images-container hidden mt-3 grid gap-3"></div>
+                        </div>
+                    `;
+                }
+            }
+
+            let recsHtml = '';
+            if (recommendations && recommendations.length > 0) {
+                const badges = recommendations.map(r => `<span onclick="document.getElementById('chatInput').value='${r}'; document.getElementById('chatInput').focus();" class="cursor-pointer text-primary hover:text-secondary hover:underline transition-colors">${r}</span>`).join(' | ');
+                recsHtml = `
+                    <div class="mt-2 text-[11px] text-gray-500 bg-white/50 p-2 rounded border border-gray-100">
+                        <span class="font-bold text-secondary mr-1">💡 你可能还想问：</span> ${badges}
+                    </div>
+                `;
+            }
+
+            el.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-white font-bold shrink-0 shadow-sm mt-1">
+                    <i class="fa-solid fa-robot"></i>
+                </div>
+                <div class="flex flex-col gap-2 max-w-[85%] w-full">
+                    <div class="bg-neutral border border-gray-200 text-dark text-sm p-4 rounded-xl rounded-tl-none shadow-sm leading-relaxed markdown-body">
+                        ${markdownHtml}
+                        ${recsHtml}
+                        ${sourcesHtml}
+                    </div>
+                </div>
+            `;
+            scrollToBottom(chatContainer);
+        };
+
+        // 核心复原：全量的图片拉取与双击绑定逻辑
+        window.toggleSource = async (btn, pages) => {
+            const container = btn.nextElementSibling;
+            if (container.classList.contains('hidden')) {
+                container.classList.remove('hidden');
+                btn.innerHTML = `<i class="fa-solid fa-chevron-up"></i> 收起来源`;
+                if (container.innerHTML === '') {
+                    container.innerHTML = '<div class="text-xs text-gray-400"><i class="fa-solid fa-spinner fa-spin"></i> 加载原图...</div>';
+                    let imgs = '';
+                    for (let page of pages) {
+                        const imgUrl = `${API_URL}/highlight?page=${page}&x=0&y=0&w=600&h=800`;
+                        imgs += `<img src="${imgUrl}" class="w-full max-w-md border border-gray-200 rounded shadow-sm hover:shadow-md transition-shadow cursor-zoom-in" title="双击查看大图" alt="第${page}页" ondblclick="openImageModal(this.src)" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\\'text-xs text-red-500\\'>⚠️ 第 ${page} 页图片加载失败</span>';">`;
+                    }
+                    container.innerHTML = imgs;
+                }
+            } else {
+                container.classList.add('hidden');
+                btn.innerHTML = `<i class="fa-regular fa-file-image"></i> 查看来源 (第 ${pages.join('、')} 页)`;
+            }
+        };
+
+        const sendChatMessage = async (text) => {
+            isProcessingChat = true;
+            chatInput.disabled = true;
+            sendBtn.disabled = true;
+            chatInput.value = "";
+
+            // 渲染用户输入
+            chatContainer.insertAdjacentHTML('beforeend', `
+                <div class="flex items-start justify-end gap-3 fade-in">
+                    <div class="bg-primary text-white text-sm p-4 rounded-xl rounded-tr-none max-w-[80%] shadow-sm">
+                        ${escapeHtml(text)}
+                    </div>
+                    <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-dark font-bold text-xs shrink-0 shadow-sm">我</div>
+                </div>
+            `);
+            chatHistory.push({ role: 'user', content: text });
+            
+            // 渲染Loading
+            const loadId = 'load-' + Date.now();
+            chatContainer.insertAdjacentHTML('beforeend', `
+                <div id="${loadId}" class="flex items-start gap-3 fade-in">
+                    <div class="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-white font-bold shrink-0 shadow-sm">
+                        <i class="fa-solid fa-robot"></i>
+                    </div>
+                    <div class="bg-neutral border border-gray-200 text-gray-500 text-sm p-4 rounded-xl rounded-tl-none shadow-sm flex items-center gap-2">
+                        <i class="fa-solid fa-circle-notch fa-spin text-secondary"></i> AI 正在检索与分析中...
+                    </div>
+                </div>
+            `);
+            scrollToBottom(chatContainer);
+
+            try {
+                const payload = {
+                    question: text,
+                    conversation_history: extractHistoryForApi(),
+                    pdf_hash: currentPdfHash
+                };
+
+                const res = await fetch(`${API_URL}/chat`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+                const data = await res.json();
+                let aiMsg = data.answer || "⚠️ 后端返回了空回答。";
+                
+                if (data.pdf_hash && data.pdf_hash !== currentPdfHash) {
+                    aiMsg = "⚠️ **文档不一致警告**：后端索引与当前上传的文档不匹配，以下回答可能来自其他文档。\n\n" + aiMsg;
+                }
+
+                chatHistory.push({ role: 'assistant', content: aiMsg });
+                
+                // 这里调用复原好的完整函数
+                replaceLoadingWithMessage(loadId, aiMsg, data.source_pages, data.recommendations);
+
+            } catch (err) {
+                document.getElementById(loadId).innerHTML = `
+                    <div class="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center text-white font-bold shrink-0 shadow-sm"><i class="fa-solid fa-xmark"></i></div>
+                    <div class="bg-red-50 border border-red-200 text-red-600 text-sm p-4 rounded-xl rounded-tl-none shadow-sm">
+                        请求失败: ${err.message}
+                    </div>
+                `;
+            } finally {
+                isProcessingChat = false;
+                chatInput.disabled = false;
+                sendBtn.disabled = false;
+                chatInput.focus();
+                scrollToBottom(chatContainer);
+            }
+        };
+    </script>
+</body>
+</html>

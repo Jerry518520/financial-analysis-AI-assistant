@@ -59,6 +59,36 @@ FOCUS_QUERIES = {
     ],
 }
 
+# 摘要专用：从 RAG 上下文中提取原始财务数据的 Prompt
+SUMMARY_EXTRACTION_PROMPT = """你是一位金融数据提取专家。请从以下财报片段中提取【原始财务数据】（金额，单位：元），以严格JSON格式返回。
+比率指标由系统自动计算，你只需要提取数字。
+
+【检索到的财报片段】：
+{context}
+
+【数据使用规则（必须严格遵守）】：
+- 所有数据必须基于【合并报表】，禁止使用母公司报表数据
+- 营业收入和营业成本必须来自同一张表（合并利润表或主要会计数据表），禁止混合不同表格的数据
+- 净利润优先使用"归属于上市公司股东的净利润"，如无则用"净利润"
+- 禁止用"利润总额-所得税费用"代替净利润（利润表有其他调整项，这样算会出错）
+- 使用最新年度的数据
+- 金额直接提取原始数字，不要转换为小数或百分比
+- 如果某个数据在片段中找不到，设为 null。绝对不要编造或自行计算缺失的原始数据
+
+【任务要求】：
+提取以下合并报表原始数据：
+
+{{
+  "营业收入": 170899152276,
+  "营业成本": 78651952846,
+  "净利润": 89334728025,
+  "上期营业收入": 147693604994,
+  "上期净利润": 77521476277
+}}
+
+如果某个数据在片段中找不到，设为 null。
+严格按上述JSON格式输出，不要有任何其他文字。"""
+
 # 上下文最大字符数限制（防止超出 DeepSeek 上下文窗口）
 MAX_CONTEXT_CHARS = 30000
 
@@ -66,14 +96,18 @@ MAX_CONTEXT_CHARS = 30000
 async def generate_report_summary(request: AnalysisRequest):
     """
     生成财报的核心摘要
+
+    三步流程（与对话接口统一计算口径）：
+    1. RAG 检索上下文
+    2. LLM 提取原始数据 → Python 精确计算比率
+    3. LLM 引用计算结果生成摘要（禁止自行计算）
     """
-    # 1. 根据 focus 选择检索关键词
+    # ===== Step 1: RAG 检索（保持原有逻辑） =====
     search_queries = FOCUS_QUERIES.get(request.focus, FOCUS_QUERIES["general"])
-    
+
     contexts = []
     all_source_pages = set()
     for q in search_queries:
-        # 每个 query 找 top 2，避免上下文过长
         result = await asyncio.to_thread(query_rag_with_source, q, 2)
         ctx = result.get("context", "")
         if ctx and RAG_INDEX_MISSING not in ctx and RAG_NOT_FOUND not in ctx and RAG_INDEX_BUILDING not in ctx:
@@ -82,18 +116,54 @@ async def generate_report_summary(request: AnalysisRequest):
 
     if not contexts:
         return {"summary": "无法生成摘要：知识库尚未建立或未检索到有效信息。请先上传并解析财报。", "source_pages": []}
-        
-    # 拼接上下文，截断到安全范围内
+
     full_context = "\n---\n".join(contexts)
     if len(full_context) > MAX_CONTEXT_CHARS:
         print(f"⚠️ 上下文长度 {len(full_context)} 超过限制 {MAX_CONTEXT_CHARS}，进行截断")
-        # 截断到最近的换行符，避免切断数字
         cut_pos = full_context.rfind("\n", 0, MAX_CONTEXT_CHARS)
         if cut_pos < MAX_CONTEXT_CHARS // 2:
-            cut_pos = MAX_CONTEXT_CHARS  # 换行符太远，直接硬截断
+            cut_pos = MAX_CONTEXT_CHARS
         full_context = full_context[:cut_pos] + "\n\n[... 上下文已截断 ...]"
-    
-    # 2. 根据 focus 调整生成提示
+
+    # ===== Step 2: LLM 提取原始数据 → Python 精确计算 =====
+    computed_data_str = ""
+    try:
+        print("📊 正在提取原始财务数据...")
+        extraction_prompt = ChatPromptTemplate.from_template(SUMMARY_EXTRACTION_PROMPT)
+        extraction_chain = extraction_prompt | get_llm() | StrOutputParser()
+        raw_response = await asyncio.to_thread(extraction_chain.invoke, {"context": full_context})
+
+        # 解析 JSON（与雷达图相同的容错逻辑）
+        raw_data = None
+        try:
+            raw_data = json.loads(raw_response)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', raw_response)
+            if match:
+                try:
+                    raw_data = json.loads(match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        if raw_data and isinstance(raw_data, dict):
+            # 验证数据合理性（复用雷达图的验证逻辑）
+            raw_data = _validate_raw_data(raw_data)
+            # Python 精确计算比率
+            computed = _compute_summary_ratios(raw_data)
+            if computed:
+                lines = []
+                for k, v in computed.items():
+                    lines.append(f"- {k}: {v}")
+                computed_data_str = "\n".join(lines)
+                print(f"✅ 已精确计算 {len(computed)} 个指标: {', '.join(computed.keys())}")
+            else:
+                print("⚠️ 原始数据不足，无法计算比率指标")
+        else:
+            print("⚠️ 未能从财报中提取到原始数据")
+    except Exception as e:
+        print(f"⚠️ 数据提取/计算失败（降级为纯文本模式）: {e}")
+
+    # ===== Step 3: 生成摘要（使用精确计算的数据） =====
     focus_instructions = {
         "general": "请涵盖核心财务指标、经营亮点、风险提示和未来展望。",
         "financial": "请重点分析核心财务指标（营收、净利润、毛利率等）及其同比变化趋势。",
@@ -101,44 +171,71 @@ async def generate_report_summary(request: AnalysisRequest):
         "business": "请重点描述业务概况、经营亮点和未来展望。",
     }
     focus_hint = focus_instructions.get(request.focus, focus_instructions["general"])
-    
-    template = """你是一位资深的金融分析师。请根据以下从财报中检索到的片段，为用户生成一份结构清晰的【财报核心摘要】。
 
-【重要】禁止任何开场白、问候语或自我介绍，直接从正文内容开始。
+    if computed_data_str:
+        # 有精确计算数据：注入上下文，禁止 LLM 自行计算
+        data_section = f"""
 
-【检索到的财报片段】：
-{context}
+【系统已精确计算的财务指标（直接引用，禁止重新计算）】：
+{computed_data_str}
 
-【任务要求】：
-1. **核心财务指标**：提取营收、净利润、毛利率等关键数据及其同比变化（如果片段中有）。
-2. **经营亮点**：简述本季度的业务进展或重大成就。
-3. **风险提示**：如果有提及，列出主要的风险因素。
-4. **未来展望**：管理层对未来的预期。
-
-【分析重点】：{focus_hint}
+以上数据由系统根据合并报表原始数据精确计算得出，与对话问答中的计算结果完全一致。
+请在摘要中直接引用这些数据，禁止自行计算任何比率指标。"""
+    else:
+        # 降级：无精确计算数据，回到旧逻辑
+        data_section = """
 
 【数据使用规则（必须严格遵守）】：
 - 营业收入和营业成本必须来自同一张表（合并利润表或主要会计数据表），禁止混合不同表格的数据
 - 毛利率 = (营业收入 - 营业成本) / 营业收入，用合并报表数据计算。如果片段中没有营业成本数据，直接写"毛利率：见财报原文"，禁止估算
 - 净利润优先使用"归属于上市公司股东的净利润"，如无则用"净利润"
 - 禁止用利润总额代替净利润，禁止用营业总成本代替营业成本
-- 如果某个指标在片段中确实找不到，直接省略该指标，不要编造或估算
+- 如果某个指标在片段中确实找不到，直接省略该指标，不要编造或估算"""
+
+    template = """你是一位资深的金融分析师。请根据以下从财报中检索到的片段，为用户生成一份结构清晰的【财报核心摘要】。
+
+【重要】禁止任何开场白、问候语或自我介绍，直接从正文内容开始。
+
+【输出格式要求（必须严格遵守）】：
+第一行必须是公司名称和报告年份，加粗显示，格式为：**公司名称 YYYY年年度报告**
+例如：**贵州茅台 2024年年度报告**
+公司名称和年份必须从下方检索到的财报片段中提取，禁止编造。
+
+【检索到的财报片段】：
+{context}
+{data_section}
+
+【任务要求】：
+1. **核心财务指标**：展示营收、净利润等关键数据及其同比变化。{ratio_instruction}
+2. **经营亮点**：简述本季度的业务进展或重大成就。
+3. **风险提示**：如果有提及，列出主要的风险因素。
+4. **未来展望**：管理层对未来的预期。
+
+【分析重点】：{focus_hint}
 
 请使用 Markdown 格式输出，使用小标题（###）分隔不同部分。如果某些信息在片段中未找到，请直接省略该部分，不要编造。
 保持语言专业、客观、精炼。
 
 【数据来源要求】：
 - 每个核心财务指标必须标注来源页码，格式为"（第X页）"
-- 禁止编造任何数字，所有数据必须来自上述检索片段"""
-    
+- 禁止编造任何数字，所有数据必须来自上述检索片段或系统已计算的数据"""
+
+    ratio_instruction = (
+        "直接引用【系统已精确计算的财务指标】中的数据，禁止自行计算"
+        if computed_data_str
+        else "如果有营业成本数据，计算毛利率等比率指标"
+    )
+
     prompt = ChatPromptTemplate.from_template(template)
     chain = prompt | get_llm() | StrOutputParser()
-    
+
     try:
         print("💡 正在生成摘要...")
-        summary = await asyncio.to_thread(chain.invoke, {"context": full_context, "focus_hint": focus_hint})
-        # 只展示 LLM 实际引用的页码，过滤幻觉页码
-        # 兜底：如果 LLM 回答中未提取到页码，使用向量检索的来源页
+        summary = await asyncio.to_thread(
+            chain.invoke,
+            {"context": full_context, "data_section": data_section,
+             "ratio_instruction": ratio_instruction, "focus_hint": focus_hint},
+        )
         cited = extract_cited_pages(summary)
         valid_cited = [p for p in cited if p in all_source_pages]
         source_pages = sorted(valid_cited) if valid_cited else sorted(all_source_pages)
@@ -351,6 +448,61 @@ async def generate_radar_chart(request: RadarRequest):
             }
 
     return result
+
+
+def _compute_summary_ratios(raw: dict) -> dict:
+    """从摘要提取的原始数据精确计算比率指标。
+
+    使用与对话接口完全相同的 calculate_* 函数，保证计算结果一致。
+    raw: LLM 提取的原始数据（金额，单位：元）
+    返回: 计算好的比率指标字典
+    """
+    from financial_report_ai_assistant.services.financial_calculator import (
+        calculate_margin, calculate_growth_rate,
+    )
+
+    metrics = {}
+
+    营业收入 = raw.get("营业收入")
+    营业成本 = raw.get("营业成本")
+    净利润 = raw.get("净利润")
+    上期营业收入 = raw.get("上期营业收入")
+    上期净利润 = raw.get("上期净利润")
+
+    # 盈利能力（与对话工具完全一致的计算函数）
+    if 营业收入 and 营业成本:
+        metrics["毛利率"] = calculate_margin(营业收入 - 营业成本, 营业收入)
+    if 净利润 and 营业收入:
+        metrics["净利率"] = calculate_margin(净利润, 营业收入)
+
+    # 同比增长
+    if 营业收入 and 上期营业收入:
+        metrics["营收增长率"] = calculate_growth_rate(营业收入, 上期营业收入)
+    if 净利润 and 上期净利润:
+        metrics["净利润增长率"] = calculate_growth_rate(净利润, 上期净利润)
+
+    # 格式化为百分比字符串，方便摘要 prompt 直接引用
+    formatted = {}
+    from financial_report_ai_assistant.services.financial_calculator import format_percentage
+    for k, v in metrics.items():
+        if isinstance(v, (int, float)):
+            formatted[k] = format_percentage(v)
+        else:
+            formatted[k] = str(v)
+
+    # 附带原始金额（亿元），供摘要展示
+    if 营业收入:
+        formatted["营业收入_亿元"] = f"{营业收入 / 1e8:.2f}亿元"
+    if 净利润:
+        formatted["净利润_亿元"] = f"{净利润 / 1e8:.2f}亿元"
+    if 营业成本:
+        formatted["营业成本_亿元"] = f"{营业成本 / 1e8:.2f}亿元"
+    if 上期营业收入:
+        formatted["上期营业收入_亿元"] = f"{上期营业收入 / 1e8:.2f}亿元"
+    if 上期净利润:
+        formatted["上期净利润_亿元"] = f"{上期净利润 / 1e8:.2f}亿元"
+
+    return formatted
 
 
 def _safe_div(numerator, denominator):

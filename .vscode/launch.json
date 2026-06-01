@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "FastAPI Server (含前端)",
+            "type": "python",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "financial_report_ai_assistant.api.main:app",
+                "--reload",
+                "--host", "127.0.0.1",
+                "--port", "8000"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            },
+            "jinja": true
+        },
+        {
+            "name": "调试: 解析器单测",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/services/test_document_parser_hybrid.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}

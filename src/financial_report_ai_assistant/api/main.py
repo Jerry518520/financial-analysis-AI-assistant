@@ -10,7 +10,8 @@ load_dotenv()
 
 from fastapi import FastAPI, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -103,9 +104,21 @@ class ChatRequest(BaseModel):
     conversation_history: list = []  # 历史对话记录 [(question, answer), ...]
     pdf_hash: str = ""  # 前端当前文档哈希，用于校验历史数据一致性
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def read_root():
-    return {"status": "ok"}
+    """托管 index.html 作为前端入口"""
+    import pathlib
+    index_path = pathlib.Path.cwd() / "frontend" / "index.html"
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content=f"<h1>frontend/index.html not found (cwd={pathlib.Path.cwd()})</h1>", status_code=404)
+
+
+# 挂载前端静态资源目录（CSS、JS、图片等）
+import pathlib as _pathlib
+_frontend_dir = _pathlib.Path.cwd() / "frontend"
+if _frontend_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_frontend_dir)), name="frontend_static")
 
 @app.post("/upload")
 async def upload_financial_report(file: UploadFile = File(...), parser: str = "llamaparse"):
