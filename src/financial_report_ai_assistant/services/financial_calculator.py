@@ -598,6 +598,7 @@ def score_dimension(metrics: dict, benchmarks: dict, inverted_metrics: set = Non
             "company": company_val,
             "benchmark": avg_val,
             "score": s,
+            "benchmark_levels": list(benchmark_levels) if isinstance(benchmark_levels, tuple) else None,
         })
 
     if not scores:

@@ -283,27 +283,69 @@
             }
         };
 
+        // 评分细则弹窗
+        window.showBenchmarkDetail = (name, levels, isPct) => {
+            if (!levels || levels.length !== 5) return;
+            const labels = ['较差 (20分)', '较低 (40分)', '平均 (60分)', '良好 (80分)', '优秀 (100分)'];
+            const fmt = (v) => isPct ? (v*100).toFixed(2)+'%' : v.toFixed(2);
+            let rows = levels.map((v, i) => `<tr><td class="px-3 py-1.5 text-center text-gray-500">${labels[i]}</td><td class="px-3 py-1.5 text-center font-mono">${fmt(v)}</td></tr>`).join('');
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4';
+            overlay.onclick = () => overlay.remove();
+            overlay.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5" onclick="event.stopPropagation()">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-bold text-primary text-sm">📊 ${name} — SASAC 五档评分细则</h3>
+                        <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+                    </div>
+                    <table class="w-full text-xs border-collapse">
+                        <thead><tr class="bg-gray-50"><th class="px-3 py-2 text-left text-gray-500">档位</th><th class="px-3 py-2 text-center text-gray-500">参考值</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                    <p class="text-[10px] text-gray-400 mt-3">在相邻档位之间线性插值，反向指标（如资产负债率）越低分越高</p>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        };
+
         // 渲染明细表格的函数
         const renderDetailsTable = (dimensions) => {
             if (!dimensions || dimensions.length === 0) return;
             const container = document.getElementById('detailsAccordion');
             const content = document.getElementById('detailsContent');
-            
-            let markdownTable = `| 指标名称 | 公司当前值 | 行业基准 | 单项得分 |\n|---|---|---|---|\n`;
-            
+
+            let html = '<table class="w-full text-xs border-collapse"><thead><tr class="bg-gray-50">';
+            html += '<th class="px-3 py-2 text-left text-gray-500">指标名称</th>';
+            html += '<th class="px-3 py-2 text-right text-gray-500">公司当前值</th>';
+            html += '<th class="px-3 py-2 text-right text-gray-500">行业基准</th>';
+            html += '<th class="px-3 py-2 text-right text-gray-500">单项得分</th>';
+            html += '<th class="px-3 py-2 text-center text-gray-500">评分细则</th>';
+            html += '</tr></thead><tbody>';
+
             dimensions.forEach(dim => {
-                markdownTable += `| **【${dim.name}】综合得分：${dim.score.toFixed(1)}** | | | |\n`;
+                html += `<tr class="bg-gray-50/80"><td colspan="5" class="px-3 py-2 font-bold text-primary">【${dim.name}】综合得分：${dim.score.toFixed(1)}</td></tr>`;
                 if (dim.detail && dim.detail.length > 0) {
                     dim.detail.forEach(item => {
                         const isPct = ['毛利率', '净利率', 'ROE', '资产负债率', '增长率', '现金回收率', '资本保值'].some(k => item.name.includes(k));
-                        const formatVal = (v) => v === null ? '-' : (isPct ? (v*100).toFixed(2)+'%' : v.toFixed(2));
-                        markdownTable += `| ${item.name} | ${formatVal(item.company)} | ${formatVal(item.benchmark)} | ${item.score.toFixed(1)} |\n`;
+                        const fmt = (v) => v === null ? '-' : (isPct ? (v*100).toFixed(2)+'%' : v.toFixed(2));
+                        const hasLevels = item.benchmark_levels && item.benchmark_levels.length === 5;
+                        const btnHtml = hasLevels
+                            ? `<button onclick="showBenchmarkDetail('${item.name}', [${item.benchmark_levels.join(',')}], ${isPct})" class="text-secondary hover:text-primary underline cursor-pointer">查看</button>`
+                            : '-';
+                        html += `<tr class="hover:bg-gray-50/50">`;
+                        html += `<td class="px-3 py-1.5 text-gray-700">${item.name}</td>`;
+                        html += `<td class="px-3 py-1.5 text-right font-mono">${fmt(item.company)}</td>`;
+                        html += `<td class="px-3 py-1.5 text-right font-mono text-gray-400">${fmt(item.benchmark)}</td>`;
+                        html += `<td class="px-3 py-1.5 text-right font-bold">${item.score.toFixed(1)}</td>`;
+                        html += `<td class="px-3 py-1.5 text-center">${btnHtml}</td>`;
+                        html += `</tr>`;
                     });
                 }
             });
-            
-            content.innerHTML = marked.parse(markdownTable);
-            container.classList.remove('hidden'); 
+
+            html += '</tbody></table>';
+            content.innerHTML = html;
+            container.classList.remove('hidden');
         };
 
         // 辅助工具函数
