@@ -487,7 +487,10 @@ class TestIndustryBenchmarks:
     def test_get_benchmark_valid(self):
         from financial_report_ai_assistant.services.financial_calculator import get_industry_benchmark
         result = get_industry_benchmark("制造业", "毛利率")
-        assert result == 0.25
+        # SASAC五档格式: (较差, 较低, 平均, 良好, 优秀)
+        assert isinstance(result, tuple)
+        assert len(result) == 5
+        assert result[2] == 0.25  # 平均值
 
     def test_get_benchmark_invalid_industry(self):
         from financial_report_ai_assistant.services.financial_calculator import get_industry_benchmark
@@ -528,17 +531,23 @@ class TestIndustryBenchmarks:
 # 16. score_metric — 单指标评分
 # ============================================================
 class TestScoreMetric:
+    # SASAC五档: (较差, 较低, 平均, 良好, 优秀) → (20, 40, 60, 80, 100)
+    BENCH = (0.12, 0.18, 0.25, 0.32, 0.40)
+
     def test_at_benchmark(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(0.25, 0.25) == 50.0
+        # 平均值0.25 → 60分
+        assert score_metric(0.25, self.BENCH) == 60.0
 
     def test_double_benchmark(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(0.50, 0.25) == 100.0
+        # 超过优秀值0.40 → 100分
+        assert score_metric(0.50, self.BENCH) == 100.0
 
     def test_zero_company(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(0, 0.25) == 0.0
+        # 低于较差值0.12 → 20分
+        assert score_metric(0, self.BENCH) == 20.0
 
     def test_benchmark_none(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
@@ -546,33 +555,42 @@ class TestScoreMetric:
 
     def test_benchmark_zero(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(0.25, 0) == 50.0
+        # 所有档位为0，任何正值都超过优秀值 → 100分
+        assert score_metric(0.25, (0, 0, 0, 0, 0)) == 100.0
 
     def test_company_none(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(None, 0.25) == 50.0
+        assert score_metric(None, self.BENCH) == 50.0
 
     def test_inverted_at_benchmark(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(0.50, 0.50, inverted=True) == 50.0
+        # 反向指标: 资产负债率 越低越好
+        inv_bench = (0.75, 0.65, 0.50, 0.40, 0.30)
+        assert score_metric(0.50, inv_bench, inverted=True) == 60.0
 
     def test_inverted_lower_is_better(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        # ratio=0.5, (2-0.5)/2*100 = 75
-        assert score_metric(0.25, 0.50, inverted=True) == 75.0
+        inv_bench = (0.75, 0.65, 0.50, 0.40, 0.30)
+        # 反向: levels反转为(0.30,0.40,0.50,0.65,0.75)
+        # 0.35 在较差(0.30)和较低(0.40)之间 → 20-40分
+        score = score_metric(0.35, inv_bench, inverted=True)
+        assert 20 < score < 40
 
     def test_inverted_higher_is_worse(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        # ratio=1.5, (2-1.5)/2*100 = 25
-        assert score_metric(0.75, 0.50, inverted=True) == 25.0
+        inv_bench = (0.75, 0.65, 0.50, 0.40, 0.30)
+        # 反向: levels反转为(0.30,0.40,0.50,0.65,0.75)
+        # 0.70 在良好(0.65)和优秀(0.75)之间 → 80-100分
+        score = score_metric(0.70, inv_bench, inverted=True)
+        assert 80 < score < 100
 
     def test_clamp_upper(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(10.0, 0.25) == 100.0
+        assert score_metric(10.0, self.BENCH) == 100.0
 
     def test_clamp_lower(self):
         from financial_report_ai_assistant.services.financial_calculator import score_metric
-        assert score_metric(-5.0, 0.25) == 0.0
+        assert score_metric(-5.0, self.BENCH) == 20.0
 
 
 # ============================================================
@@ -582,7 +600,11 @@ class TestScoreDimension:
     def test_full_metrics(self):
         from financial_report_ai_assistant.services.financial_calculator import score_dimension
         metrics = {"毛利率": 0.30, "净利率": 0.10, "ROE": 0.12}
-        benchmarks = {"毛利率": 0.25, "净利率": 0.08, "ROE": 0.10}
+        benchmarks = {
+            "毛利率": (0.12, 0.18, 0.25, 0.32, 0.40),
+            "净利率": (0.02, 0.05, 0.08, 0.12, 0.18),
+            "ROE": (0.03, 0.06, 0.10, 0.15, 0.22),
+        }
         score, detail = score_dimension(metrics, benchmarks)
         assert 0 <= score <= 100
         assert len(detail) == 3
@@ -590,7 +612,11 @@ class TestScoreDimension:
     def test_partial_metrics(self):
         from financial_report_ai_assistant.services.financial_calculator import score_dimension
         metrics = {"毛利率": 0.30, "净利率": None, "ROE": 0.12}
-        benchmarks = {"毛利率": 0.25, "净利率": 0.08, "ROE": 0.10}
+        benchmarks = {
+            "毛利率": (0.12, 0.18, 0.25, 0.32, 0.40),
+            "净利率": (0.02, 0.05, 0.08, 0.12, 0.18),
+            "ROE": (0.03, 0.06, 0.10, 0.15, 0.22),
+        }
         score, detail = score_dimension(metrics, benchmarks)
         assert len(detail) == 2
 
@@ -603,10 +629,10 @@ class TestScoreDimension:
     def test_inverted_metrics(self):
         from financial_report_ai_assistant.services.financial_calculator import score_dimension
         metrics = {"资产负债率": 0.40}
-        benchmarks = {"资产负债率": 0.50}
+        benchmarks = {"资产负债率": (0.75, 0.65, 0.50, 0.40, 0.30)}
         score, detail = score_dimension(metrics, benchmarks, {"资产负债率"})
-        # 0.40/0.50 = 0.8, inverted: (2-0.8)/2*100 = 60
-        assert score == 60.0
+        # 反向指标: levels反转后0.40对应较低档 → 40分
+        assert score == 40.0
 
 
 # ============================================================
