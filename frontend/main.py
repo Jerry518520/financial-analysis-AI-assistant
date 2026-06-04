@@ -11,6 +11,54 @@ import time
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
+MAX_POLL_ITERATIONS = 600  # 600 次 × 3 秒 ≈ 30 分钟上限
+
+def _poll_job_status(job_id: str, uploaded_file_name: str):
+    """轮询解析任务状态，更新进度条。完成后设置 session_state 并 rerun。"""
+    pct = 10
+    progress = st.progress(pct, text="🔍 正在解析 PDF...")
+    poll_count = 0
+    while poll_count < MAX_POLL_ITERATIONS:
+        poll_count += 1
+        time.sleep(3)
+        status_resp = requests.get(f"{API_URL}/status/{job_id}", timeout=10)
+        if status_resp.status_code == 404:
+            progress.empty()
+            st.error("任务不存在，后端可能已重启。请重新上传文件。")
+            return
+        elif status_resp.status_code != 200:
+            progress.empty()
+            st.error(f"状态查询失败：HTTP {status_resp.status_code}")
+            return
+        job = status_resp.json()
+        if job["status"] == "processing":
+            progress_text_str = job.get("progress", "处理中...")
+            m = re.search(r'\((\d+)/(\d+)\)', progress_text_str)
+            if m:
+                cur, tot = int(m.group(1)), int(m.group(2))
+                pct = min(95, int(10 + 85 * cur / max(tot, 1)))
+            else:
+                pct = min(90, pct + 5)
+            progress.progress(pct, text=progress_text_str)
+        elif job["status"] == "done":
+            progress.progress(100, text="✅ 解析完成！")
+            result_data = job["result"]
+            st.session_state.result = result_data
+            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
+            st.session_state.messages = []
+            st.session_state.summary = None
+            if "pending_question" in st.session_state:
+                del st.session_state.pending_question
+            st.success(f"✅ 解析成功！已上传：{uploaded_file_name}")
+            st.rerun()
+            return
+        else:
+            progress.empty()
+            st.error(f"解析失败：{job.get('error', '未知错误')}")
+            return
+    progress.empty()
+    st.error("⏳ 解析超时（超过 30 分钟），请重试或检查后端服务。")
+
 # ============================================================
 # 深邃金融主题 CSS — 暗色系 + 翡翠绿accent + 金色点缀
 # ============================================================
@@ -497,7 +545,7 @@ def call_chat_api(prompt, history=None):
         "conversation_history": history or [],
         "pdf_hash": st.session_state.get("current_pdf_hash", "")
     }
-    res = requests.post(f"{API_URL}/chat", json=payload, timeout=120)
+    res = requests.post(f"{API_URL}/chat", json=payload, timeout=300)
 
     if res.status_code == 200:
         data = res.json()
@@ -611,26 +659,72 @@ def _render_radar_chart(radar_data: dict):
     categories_closed = categories + [categories[0]]
     values_closed = values + [values[0]]
 
+    # 根据综合评分动态选色
+    if composite >= 80:
+        fill_color = 'rgba(0, 212, 170, 0.25)'
+        line_color = '#00d4aa'
+        line_width = 2.5
+    elif composite >= 60:
+        fill_color = 'rgba(79, 195, 247, 0.22)'
+        line_color = '#4fc3f7'
+        line_width = 2.5
+    elif composite >= 40:
+        fill_color = 'rgba(255, 183, 77, 0.22)'
+        line_color = '#ffb74d'
+        line_width = 2.5
+    else:
+        fill_color = 'rgba(239, 83, 80, 0.22)'
+        line_color = '#ef5350'
+        line_width = 2.5
+
     fig = go.Figure()
+
+    # 填充区域（渐变效果通过多层半透明实现）
     fig.add_trace(go.Scatterpolar(
         r=values_closed,
         theta=categories_closed,
         fill='toself',
-        fillcolor='rgba(0, 212, 170, 0.2)',
-        line=dict(color='#00d4aa', width=2),
-        hovertemplate='%{theta}: %{r:.1f}/100<extra></extra>',
+        fillcolor=fill_color,
+        line=dict(color=line_color, width=line_width),
+        hovertemplate='<b>%{theta}</b><br>评分: %{r:.1f}/100<extra></extra>',
+        name='企业评分',
     ))
+
+    # 60 分基准线
+    baseline = [60] * len(categories_closed)
+    fig.add_trace(go.Scatterpolar(
+        r=baseline,
+        theta=categories_closed,
+        mode='lines',
+        line=dict(color='rgba(255,255,255,0.15)', width=1, dash='dot'),
+        hoverinfo='skip',
+        showlegend=False,
+    ))
+
     fig.update_layout(
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=10, color='#8892a4'), gridcolor='rgba(255,255,255,0.08)'),
-            angularaxis=dict(tickfont=dict(size=12, color='#e2e8f0'), gridcolor='rgba(255,255,255,0.08)'),
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                tickvals=[20, 40, 60, 80, 100],
+                ticktext=['20', '40', '60', '80', '100'],
+                tickfont=dict(size=11, color='#8892a4'),
+                gridcolor='rgba(255,255,255,0.06)',
+                linecolor='rgba(255,255,255,0.06)',
+            ),
+            angularaxis=dict(
+                tickfont=dict(size=13, color='#e2e8f0', family='Microsoft YaHei'),
+                gridcolor='rgba(255,255,255,0.08)',
+                linecolor='rgba(255,255,255,0.08)',
+            ),
             bgcolor='rgba(0,0,0,0)',
         ),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         showlegend=False,
-        margin=dict(l=60, r=60, t=30, b=30),
-        height=380,
+        margin=dict(l=80, r=80, t=50, b=50),
+        height=500,
+        font=dict(family='Microsoft YaHei'),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -795,10 +889,10 @@ def _process_chat(prompt):
             if not t.is_alive() or chat_result["error"]:
                 break
 
-        # 如果线程还在跑，继续等待（最多再等 120 秒）
+        # 如果线程还在跑，继续等待（最多再等 240 秒，总计 5×15+240=315s > HTTP timeout 300s）
         if t.is_alive():
             progress_text.markdown("⏳ Agent 深度分析中，请稍候...")
-            t.join(timeout=120)
+            t.join(timeout=240)
 
         if chat_result["error"]:
             progress_bar.empty()
@@ -881,35 +975,35 @@ if 'result' not in st.session_state:
         uploaded_file = st.file_uploader("选择 PDF 文件", type="pdf", label_visibility="collapsed")
 
         if uploaded_file is not None:
+            parser_choice = st.selectbox(
+                "解析引擎",
+                options=["llamaparse", "kimi", "mimo"],
+                format_func=lambda x: {"kimi": "🔮 Kimi 多模态", "mimo": "🤖 MiMo 多模态"}.get(x, "📄 LlamaParse"),
+                key="parser_choice_init",
+            )
             if st.button("🚀 开始解析", type="primary", use_container_width=True):
-                with st.spinner("📤 正在上传文件..."):
-                    progress = st.progress(0)
-                    try:
-                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                        progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
-                        progress.progress(70, text="🧠 正在构建 RAG 向量库...")
-                        if resp.status_code == 200:
-                            progress.progress(100, text="✅ 解析完成！")
-                            result_data = resp.json()
-                            st.session_state.result = result_data
-                            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
-                            st.session_state.messages = []
-                            st.session_state.summary = None
-                            if "pending_question" in st.session_state:
-                                del st.session_state.pending_question
-                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                            st.rerun()
-                        else:
-                            progress.empty()
-                            try:
-                                err = resp.json().get("error", "未知错误")
-                            except Exception:
-                                err = f"HTTP {resp.status_code}"
-                            st.error(f"解析失败：{err}")
-                    except Exception as e:
+                progress = st.progress(0, text="📤 正在上传文件...")
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                    resp = requests.post(
+                        f"{API_URL}/upload", files=files,
+                        params={"parser": st.session_state.get("parser_choice_init", "llamaparse")},
+                        timeout=30,
+                    )
+                    if resp.status_code != 200:
                         progress.empty()
-                        st.error(f"连接错误: {e}")
+                        try:
+                            err = resp.json().get("error", "未知错误")
+                        except Exception:
+                            err = f"HTTP {resp.status_code}"
+                        st.error(f"上传失败：{err}")
+                    else:
+                        job_id = resp.json()["job_id"]
+                        progress.empty()
+                        _poll_job_status(job_id, uploaded_file.name)
+                except Exception as e:
+                    progress.empty()
+                    st.error(f"连接错误: {e}")
 
     with col2:
         st.markdown("""
@@ -939,35 +1033,35 @@ else:
         uploaded_file = st.file_uploader("替换 PDF 文件", type="pdf", label_visibility="collapsed")
 
         if uploaded_file is not None:
+            parser_choice = st.selectbox(
+                "解析引擎",
+                options=["llamaparse", "kimi", "mimo"],
+                format_func=lambda x: {"kimi": "🔮 Kimi 多模态", "mimo": "🤖 MiMo 多模态"}.get(x, "📄 LlamaParse"),
+                key="parser_choice_re",
+            )
             if st.button("🚀 重新解析", type="primary", use_container_width=True):
-                with st.spinner("📤 正在上传文件..."):
-                    progress = st.progress(0)
-                    try:
-                        files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
-                        progress.progress(30, text="🔍 正在解析 PDF 文本...")
-                        resp = requests.post(f"{API_URL}/upload", files=files, timeout=300)
-                        progress.progress(70, text="🧠 正在构建 RAG 向量库...")
-                        if resp.status_code == 200:
-                            progress.progress(100, text="✅ 解析完成！")
-                            result_data = resp.json()
-                            st.session_state.result = result_data
-                            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
-                            st.session_state.messages = []
-                            st.session_state.summary = None
-                            if "pending_question" in st.session_state:
-                                del st.session_state.pending_question
-                            st.success(f"✅ 解析成功！已上传：{uploaded_file.name}")
-                            st.rerun()
-                        else:
-                            progress.empty()
-                            try:
-                                err = resp.json().get("error", "未知错误")
-                            except Exception:
-                                err = f"HTTP {resp.status_code}"
-                            st.error(f"解析失败：{err}")
-                    except Exception as e:
+                progress = st.progress(0, text="📤 正在上传文件...")
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
+                    resp = requests.post(
+                        f"{API_URL}/upload", files=files,
+                        params={"parser": st.session_state.get("parser_choice_re", "llamaparse")},
+                        timeout=30,
+                    )
+                    if resp.status_code != 200:
                         progress.empty()
-                        st.error(f"连接错误: {e}")
+                        try:
+                            err = resp.json().get("error", "未知错误")
+                        except Exception:
+                            err = f"HTTP {resp.status_code}"
+                        st.error(f"上传失败：{err}")
+                    else:
+                        job_id = resp.json()["job_id"]
+                        progress.empty()
+                        _poll_job_status(job_id, uploaded_file.name)
+                except Exception as e:
+                    progress.empty()
+                    st.error(f"连接错误: {e}")
 
     with col2:
         data = st.session_state.result.get("analysis_result", {})
