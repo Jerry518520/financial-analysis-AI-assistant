@@ -1,4 +1,9 @@
 """自动化测试脚本 - AI财报分析助手测试用例"""
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import requests
 import json
 import time

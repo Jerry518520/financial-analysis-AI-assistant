@@ -321,3 +321,65 @@ class TestChatRagNotFound:
         data = resp.json()
         assert "未找到" in data["answer"]
         assert data["source_pages"] == []
+
+
+# ============================================================
+# 9. Agent LLM 配置测试（timeout + max_retries）
+# ============================================================
+class TestAgentLLMConfig:
+    def test_create_llm_has_timeout(self):
+        """create_llm() 应配置 timeout=60 防止连接挂起"""
+        from financial_report_ai_assistant.core.agent import create_llm
+        with patch("financial_report_ai_assistant.core.agent.os.getenv", return_value="test_key"):
+            llm = create_llm()
+            assert llm is not None
+            assert llm.request_timeout == 60
+
+    def test_create_llm_has_max_retries(self):
+        """create_llm() 应配置 max_retries=2 防止偶发连接失败"""
+        from financial_report_ai_assistant.core.agent import create_llm
+        with patch("financial_report_ai_assistant.core.agent.os.getenv", return_value="test_key"):
+            llm = create_llm()
+            assert llm is not None
+            assert llm.max_retries == 2
+
+
+# ============================================================
+# 10. RAG 查询扩展测试
+# ============================================================
+class TestExpandQuery:
+    def test_margin_expands_to_segment_terms(self):
+        """毛利率 查询扩展应包含分板块毛利率术语"""
+        from financial_report_ai_assistant.services.rag_service import _expand_query
+        expansions = _expand_query("毛利率是多少")
+        # 应包含分板块毛利率相关术语
+        assert any("毛利率" in t for t in expansions)
+        assert "国内市场毛利率" in expansions
+        assert "国际市场毛利率" in expansions
+
+    def test_revenue_growth_no_direct_expansion(self):
+        """营收同比增长率 不应触发查询扩展（语义搜索足够）"""
+        from financial_report_ai_assistant.services.rag_service import _expand_query
+        expansions = _expand_query("营收同比增长率")
+        # "营收" 在 term_map 中有映射
+        assert "营业收入" in expansions
+
+
+# ============================================================
+# 11. 路由判断测试
+# ============================================================
+class TestRouting:
+    def test_margin_is_simple_query(self):
+        """毛利率是多少 应走轻量级通道"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("毛利率是多少") is True
+
+    def test_growth_rate_needs_agent(self):
+        """营收同比增长率 应走 Agent 通道"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("营收同比增长率") is False
+
+    def test_simple_revenue_query(self):
+        """营收是多少 应走轻量级通道"""
+        from financial_report_ai_assistant.core.agent import is_simple_query
+        assert is_simple_query("营收是多少？") is True

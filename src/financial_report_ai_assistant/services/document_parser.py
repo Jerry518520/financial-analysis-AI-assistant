@@ -129,7 +129,15 @@ def _extract_table_with_pymupdf(page) -> str:
                     table_texts.append("\n".join(rows))
             
             if table_texts:
-                return "\n\n".join(table_texts)
+                table_result = "\n\n".join(table_texts)
+                # 【修复】表格提取可能只抓到页面中的部分表格，
+                # 将表格结果与页面全文合并，避免丢失表格之外的数据
+                full_page_text = page.get_text()
+                if len(full_page_text) > len(table_result) * 2:
+                    # 页面全文远大于表格内容，说明有大量数据未被表格提取捕获
+                    # 合并两者：表格格式化结果 + 全文（去重）
+                    return table_result + "\n\n" + full_page_text
+                return table_result
     except Exception as e:
         print(f"⚠️ PyMuPDF 表格提取失败: {e}")
     

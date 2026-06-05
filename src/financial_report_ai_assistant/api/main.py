@@ -5,6 +5,10 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
+# Windows + Python 3.13: pyarrow DLL 必须在 importlib 触发前预加载，
+# 否则 uvicorn 的 import_from_string 会因 DLL 初始化顺序导致 segfault。
+import pyarrow  # noqa: F401
+
 from dotenv import load_dotenv
 load_dotenv()
 
