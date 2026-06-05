@@ -35,6 +35,7 @@ FOCUS_QUERIES = {
         "合并利润表 营业收入 净利润",
         "主要财务数据和指标",
         "总资产 所有者权益",
+        "合并资产负债表 流动资产 流动负债 存货",
         "Business Overview and Outlook",
     ],
     "financial": [
@@ -89,12 +90,13 @@ SUMMARY_EXTRACTION_PROMPT = """你是一位金融数据提取专家。请从以�
 7. "负债总额" — 合并资产负债表中的负债合计（元）
 8. "流动资产" — 合并资产负债表中的流动资产合计（元）
 9. "流动负债" — 合并资产负债表中的流动负债合计（元）
-10. "存货" — 合并资产负债表中的存货（元）
+10. "存货" — 合并资产负债表中的存货-期末余额（元）
+11. "期初存货" — 合并资产负债表中的存货-期初余额/上年年末余额（元）
 
 找不到的字段必须设为 null，禁止省略。
 
 示例（仅展示格式，不是真实数据）：
-{{"营业收入": 133895500000, "营业成本": 92149800000, "净利润": 5617700000, "上期营业收入": 121298800000, "上期净利润": 8424800000, "总资产": 217739400000, "负债总额": 142098100000, "流动资产": 150000000000, "流动负债": 85000000000, "存货": 30000000000}}
+{{"营业收入": 133895500000, "营业成本": 92149800000, "净利润": 5617700000, "上期营业收入": 121298800000, "上期净利润": 8424800000, "总资产": 217739400000, "负债总额": 142098100000, "流动资产": 150000000000, "流动负债": 85000000000, "存货": 30000000000, "期初存货": 28000000000}}
 
 严格按上述JSON格式输出，不要有任何其他文字。"""
 
@@ -103,7 +105,7 @@ MAX_CONTEXT_CHARS = 30000
 
 # 摘要提取必须包含的字段（用于验证和重试）
 SUMMARY_REQUIRED_FIELDS = ["营业收入", "营业成本", "净利润", "总资产", "负债总额",
-                           "流动资产", "流动负债", "存货", "上期营业收入", "上期净利润"]
+                           "流动资产", "流动负债", "存货", "期初存货", "上期营业收入", "上期净利润"]
 
 
 def _parse_extraction_json(raw_response: str) -> dict:
@@ -230,7 +232,7 @@ def _compute_all_metrics(raw: dict) -> dict:
     if 营业收入 and 总资产:
         metrics["资产周转率"] = calculate_turnover(营业收入, 总资产, raw.get("上期总资产"))
     if 营业成本 and 存货:
-        metrics["存货周转率"] = calculate_inventory_turnover(营业成本, 存货, raw.get("平均存货"))
+        metrics["存货周转率"] = calculate_inventory_turnover(营业成本, 存货, raw.get("期初存货"))
 
     # 格式化
     RATIO_KEYS = {"流动比率", "速动比率", "资产周转率", "存货周转率"}
@@ -303,6 +305,71 @@ async def extract_and_cache_financial_data(context: str, pdf_hash: str = None) -
         print("⚠️ 统一提取失败：无法提取原始数据")
         return None
 
+    # 调试：检查关键字段
+    for f in ["流动资产", "流动负债", "存货", "期初存货"]:
+        val = raw_data.get(f)
+        print(f"   📊 提取结果: {f} = {val if val is not None else 'NULL'}")
+
+    # 兜底：用正则从RAG检索的原始页面中提取资产负债表数据
+    # 对于期初存货，始终用正则提取（LLM经常提取错误值）
+    missing_bs = [f for f in ["流动资产", "流动负债", "存货"] if raw_data.get(f) is None]
+    # 期初存货：如果LLM没提取或值不合理，也加入提取列表
+    if raw_data.get("期初存货") is None or raw_data.get("期初存货", 0) <= 0:
+        missing_bs.append("期初存货")
+    if missing_bs:
+        print(f"⚠️ 资产负债表字段缺失: {missing_bs}，尝试从RAG原始页面提取...")
+        import re
+        # 从RAG检索相关页面的原始内容
+        bs_queries = ["流动资产合计", "流动负债合计", "存货", "存货 期初余额"]
+        bs_contexts = []
+        for q in bs_queries:
+            try:
+                result = await asyncio.to_thread(query_rag_with_source, q, 3, 0.3)
+                ctx = result.get("context", "")
+                if ctx and RAG_INDEX_MISSING not in ctx:
+                    bs_contexts.append(ctx)
+            except Exception:
+                pass
+        bs_text = "\n".join(bs_contexts)
+        print(f"   📄 资产负债表上下文: {len(bs_text)} 字符, missing_bs={missing_bs}")
+        # 调试：打印含"存货"的行
+        for _line in bs_text.split('\n'):
+            if '存货' in _line:
+                print(f"   🔍 存货行: {repr(_line[:150])}")
+        # 从原始页面文本中用正则提取（精确匹配表格格式 "| 字段 | 数值 |"）
+        for field in missing_bs[:]:
+            if field == "期初存货":
+                # 特殊处理：从 "| 存货 | 期末值 | 期初值 |" 行提取第二个数值
+                m = re.search(r'\|\s*存货\s*\|\s*([\d,]+\.?\d+)\s*\|\s*([\d,]+\.?\d+)', bs_text)
+                if m:
+                    try:
+                        val = float(m.group(2).replace(",", ""))
+                        if val > 10000:
+                            raw_data["期初存货"] = val
+                            missing_bs.remove(field)
+                            print(f"   ✅ 正则提取成功: 期初存货 = {val}")
+                    except ValueError:
+                        pass
+            else:
+                # 优先匹配带"合计"的行，再匹配普通行
+                # 表格格式: | 流动资产合计 | 2,375,622,050.59 | 2,358,409,139.66 |
+                patterns = [
+                    rf'\|\s*{field}合计\s*\|\s*([\d,]+\.?\d+)',  # | 流动资产合计 | 数值 |
+                    rf'\|\s*{field}\s*\|\s*([\d,]+\.?\d+)',      # | 存货 | 数值 |
+                ]
+                for pat in patterns:
+                    m = re.search(pat, bs_text)
+                    if m:
+                        try:
+                            val = float(m.group(1).replace(",", ""))
+                            if val > 10000:  # 合理值检查：资产负债表数值通常 > 1万
+                                raw_data[field] = val
+                                missing_bs.remove(field)
+                                print(f"   ✅ 正则提取成功: {field} = {val}")
+                                break
+                        except ValueError:
+                            pass
+
     # 3. 数据验证
     raw_data = _validate_raw_data(raw_data)
 
@@ -361,16 +428,30 @@ def _inject_missing_data(summary: str, computed_data_str: str) -> str:
             computed_items.append((key, value))
 
     if not computed_items:
+        print(f"⚠️ _inject_missing_data: computed_items为空，computed_data_str前200字: {computed_data_str[:200]}")
         return summary
+
+    # 调试：打印所有computed_items
+    print(f"🔍 _inject_missing_data: 共{len(computed_items)}项:")
+    for k, v in computed_items:
+        print(f"   - {k}: {v}")
 
     # 检查哪些指标在摘要中缺失
     missing = []
+    summary_clean = summary.replace(",", "").replace(" ", "")
+    print(f"🔍 _inject_missing_data: 共{len(computed_items)}项, 摘要长度={len(summary_clean)}")
     for key, value in computed_items:
         # 提取数值部分（去掉百分号、亿元等）
         value_clean = value.replace(",", "").replace(" ", "")
-        # 检查摘要中是否包含该数值
-        if value_clean not in summary.replace(",", "").replace(" ", ""):
+        # 【修复】必须同时包含指标名称和数值，才算真正包含
+        # 避免"1.20"等短数字在页码/章节编号等位置被误匹配
+        key_in = key in summary_clean
+        val_in = value_clean in summary_clean
+        if not key_in or not val_in:
             missing.append((key, value))
+            print(f"   ❌ 缺失: {key}={value} (key_in={key_in}, val_in={val_in})")
+        else:
+            print(f"   ✅ 已有: {key}={value}")
 
     if not missing:
         return summary
@@ -625,7 +706,7 @@ RADAR_EXTRACTION_PROMPT = """你是一位金融数据提取专家。请从以下
     "应收账款": 34567890123,
     "平均总资产": 330000000000,
     "平均净资产": 240000000000,
-    "平均存货": 43000000000,
+    "期初存货": 43000000000,
     "平均应收账款": 32000000000,
     "经营活动现金流净额": 98765432100,
     "所得税费用": 30810950876,
@@ -960,7 +1041,7 @@ def _compute_ratios_from_raw(raw: dict) -> dict:
     负债总额 = raw.get("负债总额")
     平均总资产 = raw.get("平均总资产") or 总资产
     平均净资产 = raw.get("平均净资产") or 净资产
-    平均存货 = raw.get("平均存货") or raw.get("存货")
+    平均存货 = raw.get("期初存货") or raw.get("存货")
     平均应收账款 = raw.get("平均应收账款") or raw.get("应收账款")
     流动资产 = raw.get("流动资产")
     流动负债 = raw.get("流动负债")
@@ -989,7 +1070,7 @@ def _compute_ratios_from_raw(raw: dict) -> dict:
     if 营业收入 and 平均总资产:
         metrics["资产周转率"] = calculate_turnover(营业收入, 总资产, raw.get("上期总资产"))
     if 营业成本 and 平均存货:
-        metrics["存货周转率"] = calculate_inventory_turnover(营业成本, raw.get("存货"), raw.get("平均存货"))
+        metrics["存货周转率"] = calculate_inventory_turnover(营业成本, raw.get("存货"), raw.get("期初存货"))
     if 营业收入 and 平均应收账款:
         metrics["应收账款周转率"] = calculate_receivables_turnover(营业收入, raw.get("应收账款"), raw.get("平均应收账款"))
     if 经营活动现金流净额 and 平均总资产:

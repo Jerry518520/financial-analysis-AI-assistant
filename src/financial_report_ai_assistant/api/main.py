@@ -95,6 +95,8 @@ async def upload_financial_report(file: UploadFile = File(...)):
                 async def _background_extract():
                     try:
                         from financial_report_ai_assistant.api.analysis import extract_and_cache_financial_data
+                        from financial_report_ai_assistant.services.financial_data_store import clear_cache
+                        clear_cache(file_hash)  # 清除旧缓存，确保使用最新FOCUS_QUERIES重新提取
                         await extract_and_cache_financial_data(full_text[:30000], pdf_hash=file_hash)
                     except Exception as e:
                         print(f"⚠️ 后台提取财务数据失败: {e}")
