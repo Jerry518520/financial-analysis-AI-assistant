@@ -18,8 +18,8 @@ API_URL = "http://127.0.0.1:8000"
 # Sheet 1: 中兴通讯 2025年年度报告
 SHEET1_PDF = r"d:\Projects\Python\financial-report-ai-assistant\cache_data\current_5e2036053ccf0722489cb9ccedfcd836.pdf"
 SHEET1_TESTS = [
-    {"id": 1, "cat": "基础数据类", "q": "营收是多少？", "ref": ["133,895.5", "133895.5"]},
-    {"id": 2, "cat": "基础数据类", "q": "净利润是多少？", "ref": ["5,617.7", "5617.7"]},
+    {"id": 1, "cat": "基础数据类", "q": "营收是多少？", "ref": ["133,895.5", "133895.5", "133,895,500,000", "133895500000", "1338.95"]},
+    {"id": 2, "cat": "基础数据类", "q": "净利润是多少？", "ref": ["5,617.7", "5617.7", "5,617,700,000", "5617700000", "56.18"]},
     {"id": 3, "cat": "基础数据类", "q": "总资产是多少？", "ref": ["217,739.4", "217739.4", "2177.39"]},
     {"id": 4, "cat": "盈利能力类", "q": "毛利率是多少？", "ref": ["31.28", "28.16"]},
     {"id": 5, "cat": "盈利能力类", "q": "净利率是多少？", "ref": ["4.20", "4.2%"]},
@@ -86,7 +86,7 @@ def upload_pdf(pdf_path, force_upload=False):
     if resp.status_code == 200:
         data = resp.json()
         print(f"   ✅ 上传成功, hash={data.get('pdf_hash', 'N/A')[:8]}...")
-        time.sleep(2)  # 等待RAG索引稳定
+        time.sleep(15)  # 等待后台财务数据提取完成
         return True
     else:
         print(f"   ❌ 上传失败: {resp.status_code} - {resp.text[:200]}")

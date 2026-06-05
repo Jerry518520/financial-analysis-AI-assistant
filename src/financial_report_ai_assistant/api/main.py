@@ -195,7 +195,7 @@ def _answer_from_cache(question: str, cached: dict) -> str:
                         raw_val = raw.get(raw_key_map.get(base_name, base_name))
                         if raw_val is not None:
                             # 格式化原始数字（带千分位）
-                            if isinstance(raw_val, float) and abs(raw_val) > 10000:
+                            if isinstance(raw_val, (int, float)) and abs(raw_val) > 10000:
                                 raw_formatted = f"{raw_val:,.2f}元"
                             else:
                                 raw_formatted = f"{raw_val}"
