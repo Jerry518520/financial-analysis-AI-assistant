@@ -13,6 +13,17 @@ API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
 MAX_POLL_ITERATIONS = 600  # 600 次 × 3 秒 ≈ 30 分钟上限
 
+def _apply_upload_result(result_data: dict, uploaded_file_name: str):
+    """上传完成后设置 session_state 并 rerun。同步/异步 API 共用。"""
+    st.session_state.result = result_data
+    st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
+    st.session_state.messages = []
+    st.session_state.summary = None
+    if "pending_question" in st.session_state:
+        del st.session_state.pending_question
+    st.success(f"✅ 解析成功！已上传：{uploaded_file_name}")
+    st.rerun()
+
 def _poll_job_status(job_id: str, uploaded_file_name: str):
     """轮询解析任务状态，更新进度条。完成后设置 session_state 并 rerun。"""
     pct = 10
@@ -42,15 +53,7 @@ def _poll_job_status(job_id: str, uploaded_file_name: str):
             progress.progress(pct, text=progress_text_str)
         elif job["status"] == "done":
             progress.progress(100, text="✅ 解析完成！")
-            result_data = job["result"]
-            st.session_state.result = result_data
-            st.session_state.current_pdf_hash = result_data.get("pdf_hash", "")
-            st.session_state.messages = []
-            st.session_state.summary = None
-            if "pending_question" in st.session_state:
-                del st.session_state.pending_question
-            st.success(f"✅ 解析成功！已上传：{uploaded_file_name}")
-            st.rerun()
+            _apply_upload_result(job["result"], uploaded_file_name)
             return
         else:
             progress.empty()
@@ -998,9 +1001,14 @@ if 'result' not in st.session_state:
                             err = f"HTTP {resp.status_code}"
                         st.error(f"上传失败：{err}")
                     else:
-                        job_id = resp.json()["job_id"]
+                        resp_data = resp.json()
                         progress.empty()
-                        _poll_job_status(job_id, uploaded_file.name)
+                        if "job_id" in resp_data:
+                            _poll_job_status(resp_data["job_id"], uploaded_file.name)
+                        else:
+                            # 同步API：上传已完成，直接使用结果
+                            progress_bar = st.progress(100, text="✅ 解析完成！")
+                            _apply_upload_result(resp_data, uploaded_file.name)
                 except Exception as e:
                     progress.empty()
                     st.error(f"连接错误: {e}")
@@ -1056,9 +1064,14 @@ else:
                             err = f"HTTP {resp.status_code}"
                         st.error(f"上传失败：{err}")
                     else:
-                        job_id = resp.json()["job_id"]
+                        resp_data = resp.json()
                         progress.empty()
-                        _poll_job_status(job_id, uploaded_file.name)
+                        if "job_id" in resp_data:
+                            _poll_job_status(resp_data["job_id"], uploaded_file.name)
+                        else:
+                            # 同步API：上传已完成，直接使用结果
+                            progress_bar = st.progress(100, text="✅ 解析完成！")
+                            _apply_upload_result(resp_data, uploaded_file.name)
                 except Exception as e:
                     progress.empty()
                     st.error(f"连接错误: {e}")

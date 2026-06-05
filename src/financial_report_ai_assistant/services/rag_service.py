@@ -469,21 +469,23 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         # 主查询
         docs_and_scores = vector_store.similarity_search_with_score(question, k=top_k)
 
-        # 多查询扩展：用同义词补充查询，提高召回率
-        # 【修复】扩展结果施加分数衰减（0.85），防止关键词堆砌查询（如"营业收入 营业总收入"）
-        # 因词频优势压过主查询的精确匹配。主查询结果始终优先于扩展结果。
+        # 多查询扩展：逐个扩展词独立查询，提高召回率
+        # 【修复】不再拼接为一个字符串查询（会因词频稀释导致漏检），
+        # 改为每个扩展词独立搜索，确保每个组件数据都能被找到。
+        # 【修复】FAISS L2 距离衰减方向：score 越小越相似，所以除以衰减系数
+        # 让扩展结果排名更差（距离变大），主查询结果始终优先。
         expansions = _expand_query(question)
         if expansions:
-            extra_query = " ".join(expansions[:5])  # 最多 5 个补充词
-            print(f"🔄 查询扩展: {extra_query}")
-            extra_results = vector_store.similarity_search_with_score(extra_query, k=top_k + 3)
-            # 合并结果，去重（按 doc page_content 去重），扩展结果分数衰减
             EXPANSION_SCORE_DECAY = 0.85
             seen_contents = {doc.page_content for doc, _ in docs_and_scores}
-            for doc, score in extra_results:
-                if doc.page_content not in seen_contents:
-                    docs_and_scores.append((doc, score * EXPANSION_SCORE_DECAY))
-                    seen_contents.add(doc.page_content)
+            # 每个扩展词独立查询，最多取 3 个（避免过多 API 调用）
+            for term in expansions[:3]:
+                print(f"🔄 查询扩展词: {term}")
+                term_results = vector_store.similarity_search_with_score(term, k=top_k + 3)
+                for doc, score in term_results:
+                    if doc.page_content not in seen_contents:
+                        docs_and_scores.append((doc, score / EXPANSION_SCORE_DECAY))
+                        seen_contents.add(doc.page_content)
 
     if not docs_and_scores:
         return {"context": "未找到相关内容。", "page_num": 1}

@@ -498,7 +498,23 @@
                 const res = await fetch(`${API_URL}/upload?parser=${document.getElementById('parserSelect').value}`, { method: "POST", body: formData });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || "上传失败");
-                pollStatus(data.job_id, file.name);
+                // 兼容同步API（无job_id）和异步API（有job_id）
+                if (data.job_id) {
+                    pollStatus(data.job_id, file.name);
+                } else {
+                    // 同步API：上传已完成，直接使用结果
+                    document.getElementById('progressBar').style.width = "100%";
+                    document.getElementById('progressPct').innerText = "100%";
+                    document.getElementById('progressText').innerText = "✅ 解析完成！";
+                    showToast("财报解析完成，可以开始提问了", "success");
+                    currentPdfHash = data.pdf_hash || "";
+                    document.getElementById('currentFileName').innerText = file.name;
+                    document.getElementById('currentFileStatus').querySelector('i').className = "fa-solid fa-file-invoice text-secondary";
+                    document.getElementById('workspaceOverlay').classList.add('hidden');
+                    uploadBtn.disabled = false;
+                    chatHistory = [];
+                    setTimeout(() => document.getElementById('progressContainer').classList.add('hidden'), 3000);
+                }
             } catch (err) {
                 showToast(`上传错误: ${err.message}`, "error");
                 uploadBtn.disabled = false;
