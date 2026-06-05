@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from financial_report_ai_assistant.services.rag_service import query_rag_with_source, RAG_NOT_FOUND, RAG_INDEX_MISSING, RAG_INDEX_BUILDING, get_current_pdf_hash
 from financial_report_ai_assistant.services.ai_chat import get_llm
+from financial_report_ai_assistant.services.financial_data_store import get_current_cached_data, set_cached_data
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 import asyncio
@@ -169,6 +170,178 @@ async def _extract_with_retry(context: str, max_retries: int = 2) -> dict:
     return raw_data
 
 
+def _compute_all_metrics(raw: dict) -> dict:
+    """从原始数据计算所有财务指标（与对话路径统一计算口径）。
+
+    返回格式化的指标字典，供概要和对话共同使用。
+    """
+    from financial_report_ai_assistant.services.financial_calculator import (
+        calculate_margin, calculate_growth_rate, calculate_roe,
+        calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
+        calculate_turnover, calculate_inventory_turnover,
+        format_percentage,
+    )
+
+    metrics = {}
+
+    # 原始数据
+    营业收入 = raw.get("营业收入")
+    营业成本 = raw.get("营业成本")
+    净利润 = raw.get("净利润")
+    上期营业收入 = raw.get("上期营业收入")
+    上期净利润 = raw.get("上期净利润")
+    总资产 = raw.get("总资产")
+    负债总额 = raw.get("负债总额")
+    流动资产 = raw.get("流动资产")
+    流动负债 = raw.get("流动负债")
+    存货 = raw.get("存货")
+    平均净资产 = raw.get("平均净资产") or raw.get("净资产")
+    期初所有者权益 = raw.get("期初所有者权益")
+
+    # 直接提取的字段（非计算）
+    if raw.get("基本每股收益") is not None:
+        metrics["EPS"] = f"{raw['基本每股收益']:.2f}元/股"
+    if raw.get("加权平均净资产收益率") is not None:
+        metrics["ROE"] = format_percentage(raw["加权平均净资产收益率"])
+    if raw.get("总资产") is not None:
+        metrics["总资产_亿元"] = f"{总资产 / 1e8:.2f}亿元"
+
+    # 盈利能力
+    if 营业收入 and 营业成本:
+        metrics["毛利率"] = calculate_margin(营业收入 - 营业成本, 营业收入)
+    if 净利润 and 营业收入:
+        metrics["净利率"] = calculate_margin(净利润, 营业收入)
+
+    # 同比增长
+    if 营业收入 and 上期营业收入:
+        metrics["营收增长率"] = calculate_growth_rate(营业收入, 上期营业收入)
+    if 净利润 and 上期净利润:
+        metrics["净利润增长率"] = calculate_growth_rate(净利润, 上期净利润)
+
+    # 偿债能力
+    if 负债总额 and 总资产:
+        metrics["资产负债率"] = calculate_debt_ratio(负债总额, 总资产)
+    if 流动资产 and 流动负债:
+        metrics["流动比率"] = calculate_current_ratio(流动资产, 流动负债)
+    if 流动资产 is not None and 存货 is not None and 流动负债:
+        metrics["速动比率"] = calculate_quick_ratio(流动资产, 存货, 流动负债)
+
+    # 运营能力
+    if 营业收入 and 总资产:
+        metrics["资产周转率"] = calculate_turnover(营业收入, 总资产, raw.get("上期总资产"))
+    if 营业成本 and 存货:
+        metrics["存货周转率"] = calculate_inventory_turnover(营业成本, 存货, raw.get("平均存货"))
+
+    # 格式化
+    RATIO_KEYS = {"流动比率", "速动比率", "资产周转率", "存货周转率"}
+    formatted = {}
+    for k, v in metrics.items():
+        if isinstance(v, (int, float)):
+            if k in RATIO_KEYS:
+                formatted[k] = f"{v:.2f}"
+            else:
+                formatted[k] = format_percentage(v)
+        else:
+            formatted[k] = str(v)
+
+    # 附带原始金额（同时保留原始数字和亿元格式）
+    if 营业收入:
+        formatted["营业收入"] = f"{营业收入:,.2f}元"
+        formatted["营业收入_亿元"] = f"{营业收入 / 1e8:.2f}亿元"
+    if 净利润:
+        formatted["净利润"] = f"{净利润:,.2f}元"
+        formatted["净利润_亿元"] = f"{净利润 / 1e8:.2f}亿元"
+    if 营业成本:
+        formatted["营业成本"] = f"{营业成本:,.2f}元"
+        formatted["营业成本_亿元"] = f"{营业成本 / 1e8:.2f}亿元"
+    if 总资产:
+        formatted["总资产"] = f"{总资产:,.2f}元"
+
+    return formatted
+
+
+async def extract_and_cache_financial_data(context: str, pdf_hash: str = None) -> dict:
+    """统一提取函数：一次性提取所有财务数据并缓存。
+
+    这是所有数据路径的唯一入口，确保概要、对话、雷达图使用同一份数据。
+    """
+    # 检查是否已有缓存
+    if pdf_hash:
+        from financial_report_ai_assistant.services.financial_data_store import get_cached_data
+        cached = get_cached_data(pdf_hash)
+        if cached:
+            print(f"📦 命中缓存: pdf_hash={pdf_hash[:8]}...")
+            return cached
+
+    print("📊 开始统一提取财务数据...")
+
+    # 1. RAG检索获取更完整的上下文
+    search_queries = FOCUS_QUERIES.get("general", [])
+    contexts = []
+    all_source_pages = set()
+    for q in search_queries:
+        result = await asyncio.to_thread(query_rag_with_source, q, 8, 0.3)
+        ctx = result.get("context", "")
+        if ctx and RAG_INDEX_MISSING not in ctx and RAG_NOT_FOUND not in ctx and RAG_INDEX_BUILDING not in ctx:
+            contexts.append(ctx)
+            all_source_pages.update(result.get("source_pages", []))
+
+    if not contexts:
+        # RAG无结果，用传入的context
+        full_context = context[:MAX_CONTEXT_CHARS]
+    else:
+        full_context = "\n---\n".join(contexts)
+        if len(full_context) > MAX_CONTEXT_CHARS:
+            cut_pos = full_context.rfind("\n", 0, MAX_CONTEXT_CHARS)
+            if cut_pos < MAX_CONTEXT_CHARS // 2:
+                cut_pos = MAX_CONTEXT_CHARS
+            full_context = full_context[:cut_pos]
+
+    # 2. LLM提取原始数据（带重试）
+    raw_data = await _extract_with_retry(full_context, max_retries=2)
+    if not raw_data:
+        print("⚠️ 统一提取失败：无法提取原始数据")
+        return None
+
+    # 3. 数据验证
+    raw_data = _validate_raw_data(raw_data)
+
+    # 4. Python精确计算所有指标
+    computed_metrics = _compute_all_metrics(raw_data)
+
+    # 5. 提取公司名称和报告期
+    company_name = ""
+    report_period = ""
+    # 从上下文中尝试提取
+    import re
+    for line in full_context.split("\n")[:20]:
+        if "公司" in line or "集团" in line:
+            if not company_name:
+                company_name = line.strip()[:30]
+        if "年度报告" in line or "季度报告" in line:
+            if not report_period:
+                report_period = line.strip()[:30]
+
+    # 6. 组装缓存数据
+    cached_data = {
+        "pdf_hash": pdf_hash or get_current_pdf_hash() or "",
+        "raw_data": raw_data,
+        "computed_metrics": computed_metrics,
+        "source_pages": sorted(all_source_pages),
+        "company_name": company_name,
+        "report_period": report_period,
+    }
+
+    # 7. 缓存
+    if pdf_hash:
+        set_cached_data(pdf_hash, cached_data)
+
+    non_null = sum(1 for v in raw_data.values() if v is not None)
+    print(f"✅ 统一提取完成: {non_null}个原始字段, {len(computed_metrics)}个计算指标")
+
+    return cached_data
+
+
 def _inject_missing_data(summary: str, computed_data_str: str) -> str:
     """后处理：检查摘要是否包含所有已计算的数据，缺失则补充。
 
@@ -217,70 +390,80 @@ async def generate_report_summary(request: AnalysisRequest):
     """
     生成财报的核心摘要
 
-    三步流程（与对话接口统一计算口径）：
-    1. RAG 检索上下文
-    2. LLM 提取原始数据 → Python 精确计算比率
+    统一数据路径：
+    1. 优先从缓存读取（上传时已提取的数据）
+    2. 缓存未命中时走原有提取流程
     3. LLM 引用计算结果生成摘要（禁止自行计算）
     """
-    # ===== Step 1: RAG 检索（与对话路径统一参数） =====
-    search_queries = FOCUS_QUERIES.get(request.focus, FOCUS_QUERIES["general"])
-
-    contexts = []
-    all_source_pages = set()
-    for q in search_queries:
-        # 与对话路径使用相同的 top_k 和 similarity_threshold，确保检索结果一致
-        result = await asyncio.to_thread(query_rag_with_source, q, 8, 0.3)
-        ctx = result.get("context", "")
-        if ctx and RAG_INDEX_MISSING not in ctx and RAG_NOT_FOUND not in ctx and RAG_INDEX_BUILDING not in ctx:
-            contexts.append(ctx)
-            all_source_pages.update(result.get("source_pages", []))
-
-    if not contexts:
-        return {"summary": "无法生成摘要：知识库尚未建立或未检索到有效信息。请先上传并解析财报。", "source_pages": []}
-
-    full_context = "\n---\n".join(contexts)
-    if len(full_context) > MAX_CONTEXT_CHARS:
-        print(f"⚠️ 上下文长度 {len(full_context)} 超过限制 {MAX_CONTEXT_CHARS}，进行截断")
-        cut_pos = full_context.rfind("\n", 0, MAX_CONTEXT_CHARS)
-        if cut_pos < MAX_CONTEXT_CHARS // 2:
-            cut_pos = MAX_CONTEXT_CHARS
-        full_context = full_context[:cut_pos] + "\n\n[... 上下文已截断 ...]"
-
-    # ===== Step 2: LLM 提取原始数据 → Python 精确计算 =====
+    # ===== Step 1: 优先从缓存读取 =====
+    cached = get_current_cached_data()
     computed_data_str = ""
-    try:
-        print("📊 正在提取原始财务数据...")
-        raw_data = await _extract_with_retry(full_context, max_retries=2)
+    raw_data = None
+    all_source_pages = set()
 
-        if raw_data and isinstance(raw_data, dict):
-            # 打印提取的原始数据（调试用）
-            extracted_summary = {k: v for k, v in raw_data.items() if v is not None}
-            missing_fields = [f for f in SUMMARY_REQUIRED_FIELDS if f not in raw_data or raw_data[f] is None]
-            print(f"📊 LLM 提取的原始数据: {extracted_summary}")
-            if missing_fields:
-                print(f"⚠️ 以下字段未提取到（RAG上下文中可能缺失）: {', '.join(missing_fields)}")
+    if cached and cached.get("computed_metrics"):
+        print("📦 概要生成：命中缓存，使用统一数据")
+        raw_data = cached.get("raw_data", {})
+        computed_metrics = cached.get("computed_metrics", {})
+        all_source_pages = set(cached.get("source_pages", []))
 
-            # 检查是否所有关键字段都是 null（LLM 可能没有认真提取）
-            non_null_count = sum(1 for k in ["营业收入", "营业成本", "净利润"] if raw_data.get(k) is not None)
-            if non_null_count == 0:
-                print("⚠️ 所有关键字段均为 null，跳过计算，降级为纯文本模式")
-            else:
-                # 验证数据合理性（复用雷达图的验证逻辑）
+        # 格式化为 computed_data_str
+        lines = []
+        for k, v in computed_metrics.items():
+            lines.append(f"- {k}: {v}")
+        computed_data_str = "\n".join(lines)
+    else:
+        # ===== 降级：缓存未命中，走原有提取流程 =====
+        print("⚠️ 概要生成：缓存未命中，走提取流程")
+        search_queries = FOCUS_QUERIES.get(request.focus, FOCUS_QUERIES["general"])
+
+        contexts = []
+        for q in search_queries:
+            result = await asyncio.to_thread(query_rag_with_source, q, 8, 0.3)
+            ctx = result.get("context", "")
+            if ctx and RAG_INDEX_MISSING not in ctx and RAG_NOT_FOUND not in ctx and RAG_INDEX_BUILDING not in ctx:
+                contexts.append(ctx)
+                all_source_pages.update(result.get("source_pages", []))
+
+        if not contexts:
+            return {"summary": "无法生成摘要：知识库尚未建立或未检索到有效信息。请先上传并解析财报。", "source_pages": []}
+
+        full_context = "\n---\n".join(contexts)
+        if len(full_context) > MAX_CONTEXT_CHARS:
+            cut_pos = full_context.rfind("\n", 0, MAX_CONTEXT_CHARS)
+            if cut_pos < MAX_CONTEXT_CHARS // 2:
+                cut_pos = MAX_CONTEXT_CHARS
+            full_context = full_context[:cut_pos]
+
+        try:
+            raw_data = await _extract_with_retry(full_context, max_retries=2)
+            if raw_data and isinstance(raw_data, dict):
                 raw_data = _validate_raw_data(raw_data)
-                # Python 精确计算比率
                 computed = _compute_summary_ratios(raw_data)
                 if computed:
                     lines = []
                     for k, v in computed.items():
                         lines.append(f"- {k}: {v}")
                     computed_data_str = "\n".join(lines)
-                    print(f"✅ 已精确计算 {len(computed)} 个指标: {', '.join(computed.keys())}")
-                else:
-                    print("⚠️ 原始数据不足，无法计算比率指标")
-        else:
-            print("⚠️ 未能从财报中提取到原始数据")
-    except Exception as e:
-        print(f"⚠️ 数据提取/计算失败（降级为纯文本模式）: {e}")
+        except Exception as e:
+            print(f"⚠️ 数据提取/计算失败: {e}")
+
+    # ===== Step 2: RAG检索摘要上下文 =====
+    search_queries = FOCUS_QUERIES.get(request.focus, FOCUS_QUERIES["general"])
+    contexts = []
+    for q in search_queries:
+        result = await asyncio.to_thread(query_rag_with_source, q, 8, 0.3)
+        ctx = result.get("context", "")
+        if ctx and RAG_INDEX_MISSING not in ctx and RAG_NOT_FOUND not in ctx and RAG_INDEX_BUILDING not in ctx:
+            contexts.append(ctx)
+            all_source_pages.update(result.get("source_pages", []))
+
+    full_context = "\n---\n".join(contexts) if contexts else ""
+    if len(full_context) > MAX_CONTEXT_CHARS:
+        cut_pos = full_context.rfind("\n", 0, MAX_CONTEXT_CHARS)
+        if cut_pos < MAX_CONTEXT_CHARS // 2:
+            cut_pos = MAX_CONTEXT_CHARS
+        full_context = full_context[:cut_pos]
 
     # ===== Step 3: 生成摘要（使用精确计算的数据） =====
     focus_instructions = {
@@ -474,7 +657,22 @@ async def get_industries():
 @router.post("/analyze/radar")
 async def generate_radar_chart(request: RadarRequest):
     """生成能力雷达图数据"""
-    # 0. 检查缓存（同一文档只提取一次，保证数据一致性）
+    # 0. 优先检查统一缓存（上传时已提取的数据）
+    unified_cached = get_current_cached_data()
+    if unified_cached and unified_cached.get("raw_data"):
+        print("📦 雷达图：命中统一缓存")
+        from financial_report_ai_assistant.services.financial_calculator import compute_radar_scores
+        raw_data = unified_cached["raw_data"]
+        computed = _compute_ratios_from_raw(raw_data)
+        if computed:
+            industry = request.industry or "制造业"
+            result = compute_radar_scores(computed, industry)
+            result["extracted_metrics"] = computed
+            result["source_pages"] = unified_cached.get("source_pages", [])
+            result["cached"] = True
+            return result
+
+    # 0b. 检查雷达专用缓存
     pdf_hash = get_current_pdf_hash()
     if pdf_hash:
         with _radar_cache_lock:

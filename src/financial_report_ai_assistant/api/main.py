@@ -90,6 +90,16 @@ async def upload_financial_report(file: UploadFile = File(...)):
             success = await asyncio.to_thread(build_vector_store, full_text, file_hash)
             if success:
                 print(">>> RAG 索引构建成功！")
+
+                # 【新增】后台提取所有财务数据并缓存（不阻塞上传响应）
+                async def _background_extract():
+                    try:
+                        from financial_report_ai_assistant.api.analysis import extract_and_cache_financial_data
+                        await extract_and_cache_financial_data(full_text[:30000], pdf_hash=file_hash)
+                    except Exception as e:
+                        print(f"⚠️ 后台提取财务数据失败: {e}")
+
+                asyncio.create_task(_background_extract())
             else:
                 print(">>> RAG 索引构建失败！")
                 return JSONResponse(status_code=500, content={"error": "RAG 向量库构建失败，请检查服务端日志"})
@@ -130,9 +140,87 @@ async def preview_chunks_endpoint(file: UploadFile = File(...)):
         ]
     }
 
+
+# 问题→缓存指标的映射表（按关键词长度降序排列，优先匹配更精确的关键词）
+_QUESTION_METRIC_MAP = [
+    # 长关键词优先（避免"营收"误匹配"营收增长率"）
+    ("营收增长率", ["营收增长率"]),
+    ("收入增长率", ["营收增长率"]),
+    ("净利润增长率", ["净利润增长率"]),
+    ("净利润同比增长", ["净利润增长率"]),
+    ("净资产收益率", ["ROE"]),
+    ("每股收益", ["EPS"]),
+    ("资产负债率", ["资产负债率"]),
+    ("流动比率", ["流动比率"]),
+    ("速动比率", ["速动比率"]),
+    ("资产周转率", ["资产周转率"]),
+    ("存货周转率", ["存货周转率"]),
+    ("营业收入", ["营业收入_亿元", "营业收入"]),
+    ("营收是多少", ["营业收入_亿元", "营业收入"]),
+    ("营收是", ["营业收入_亿元", "营业收入"]),
+    ("收入是多少", ["营业收入_亿元", "营业收入"]),
+    ("净利润是多少", ["净利润_亿元", "净利润"]),
+    ("净利润是", ["净利润_亿元", "净利润"]),
+    ("毛利率", ["毛利率"]),
+    ("净利率", ["净利率"]),
+    ("ROE", ["ROE"]),
+    ("roe", ["ROE"]),
+    ("EPS", ["EPS"]),
+    ("eps", ["EPS"]),
+    ("总资产是多少", ["总资产_亿元", "总资产"]),
+    ("总资产是", ["总资产_亿元", "总资产"]),
+]
+
+
+def _answer_from_cache(question: str, cached: dict) -> str:
+    """尝试从缓存数据中回答简单事实性问题。返回None表示无法回答。"""
+    metrics = cached.get("computed_metrics", {})
+    raw = cached.get("raw_data", {})
+    if not metrics:
+        return None
+
+    # 按关键词长度降序匹配（更精确的关键词优先）
+    for keyword, metric_keys in _QUESTION_METRIC_MAP:
+        if keyword in question:
+            for key in metric_keys:
+                if key in metrics:
+                    value = metrics[key]
+                    # 对于金额类指标，同时提供亿元格式和原始数字
+                    if key.endswith("_亿元"):
+                        base_name = key.replace("_亿元", "")
+                        # 尝试从raw_data中获取原始数字
+                        raw_key_map = {"营业收入": "营业收入", "净利润": "净利润", "总资产": "总资产"}
+                        raw_val = raw.get(raw_key_map.get(base_name, base_name))
+                        if raw_val is not None:
+                            # 格式化原始数字（带千分位）
+                            if isinstance(raw_val, float) and abs(raw_val) > 10000:
+                                raw_formatted = f"{raw_val:,.2f}元"
+                            else:
+                                raw_formatted = f"{raw_val}"
+                            return f"根据已提取的财务数据，{base_name}为 **{raw_formatted}**（约{value}）。"
+                        return f"根据已提取的财务数据，{base_name}为 **{value}**。"
+                    return f"根据已提取的财务数据，{key}为 **{value}**。"
+
+    return None
+
+
 @app.post("/chat")
 async def chat_with_report(request: ChatRequest):
     try:
+        # 【新增】检查统一缓存：简单事实性问题直接从缓存回答
+        from financial_report_ai_assistant.services.financial_data_store import get_current_cached_data
+        cached = get_current_cached_data()
+        if cached and cached.get("computed_metrics"):
+            answer = _answer_from_cache(request.question, cached)
+            if answer:
+                print(f"[CHAT] 缓存命中: {request.question} -> 直接返回")
+                return {
+                    "answer": answer,
+                    "source_page": 0,
+                    "source_pages": cached.get("source_pages", []),
+                    "pdf_hash": cached.get("pdf_hash", ""),
+                }
+
         # RAG 检索（当前问题，使用较低阈值提高中文财务术语召回率）
         rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 12, 0.3)
         relevant_context = rag_result["context"]
