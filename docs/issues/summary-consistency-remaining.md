@@ -3,140 +3,122 @@
 ## 状态: Open
 ## 优先级: Medium
 ## 创建日期: 2026-06-05
+## 最后更新: 2026-06-05
 
 ---
 
 ## 问题描述
 
-TDD测试中，核心概要（`/analyze/summary`）与对话问答（`/chat`）的数据一致性为 **87.0% (20/23)**，未达到100%目标。
+TDD测试中，核心概要（`/analyze/summary`）与对话问答（`/chat`）的数据一致性为 **91.3% (21/23)**，未达到100%目标。
 
-### 当前不一致项（3个）
+### 当前不一致项（2个）
 
 | # | Sheet | 字段 | 对话返回值 | 概要表现 | 根因 |
 |---|-------|------|-----------|----------|------|
-| 1 | Sheet1 (中兴通讯) | EPS | 1.17元/股 | 概要中偶发缺失 | LLM非确定性，EPS非计算字段 |
-| 2 | Sheet2 (600212) | EPS | -0.0305元/股 | 概要中偶发缺失 | 同上 |
-| 3 | Sheet2 (600212) | 速动比率 | 0.82 | 概要中偶发缺失 | RAG上下文中存货数据偶发缺失 |
+| 1 | Sheet2 (600212) | 流动比率 | 1.20 | 概要中缺失 | `_inject_missing_data` 字符串误匹配 |
+| 2 | Sheet2 (600212) | 速动比率 | 0.82 | 概要中缺失 | 同上 |
+
+### 已修复的不一致项（本次迭代）
+
+| # | Sheet | 字段 | 修复前 | 修复后 | 修复方式 |
+|---|-------|------|--------|--------|----------|
+| 1 | Sheet1 | 总资产 | ❌ 缺失 | ✅ 100% | 统一数据路径 + 缓存 |
+| 2 | Sheet1 | EPS | ❌ 偶发缺失 | ✅ 100% | `_compute_all_metrics` 直接字段 |
+| 3 | Sheet1 | 流动比率 | ❌ 偶发缺失 | ✅ 100% | 统一缓存 + 注入 |
+| 4 | Sheet1 | 速动比率 | ❌ 偶发缺失 | ✅ 100% | 统一缓存 + 注入 |
+| 5 | Sheet2 | 总资产 | ❌ 缺失 | ✅ 100% | 统一数据路径 + 缓存 |
+| 6 | Sheet2 | EPS | ❌ 偶发缺失 | ✅ 100% | `_compute_all_metrics` 直接字段 |
+| 7 | Sheet2 | 流动比率 | ❌ 缺失 | ❌ 仍缺失 | 注入函数误匹配bug |
 
 ---
 
 ## 根因分析
 
-### 问题1&2: EPS缺失
+### 问题1&2: Sheet 2 流动比率/速动比率缺失
 
-EPS（每股收益）是**直接从财报提取**的字段，不是通过`_compute_summary_ratios()`计算得出的。当前的后处理注入机制（`_inject_missing_data`）只覆盖计算字段（毛利率、净利率、资产负债率、流动比率、速动比率），无法注入EPS。
+**根本原因：`_inject_missing_data` 的字符串匹配有缺陷。**
 
-**当前保障链路：**
-1. ✅ Prompt硬化（编号字段清单）→ 仅覆盖提取阶段的10个计算字段
-2. ✅ 提取重试（`_extract_with_retry`）→ 仅覆盖提取阶段
-3. ✅ 后处理注入（`_inject_missing_data`）→ 仅覆盖`computed_data_str`中的字段
-4. ❌ **EPS不在任何保障链路中** → 依赖LLM在摘要生成时自行引用
+当前注入逻辑：
+```python
+# 检查摘要中是否包含该数值
+if value_clean not in summary.replace(",", "").replace(" ", ""):
+    missing.append((key, value))
+```
 
-### 问题3: 速动比率缺失
+问题：`value_clean = "1.20"` 这个数字太短、太常见，可能出现在摘要文本的其他上下文中（如"第1.20节"、"增长1.20倍"、页码等），导致函数误以为该指标已包含在摘要中，跳过注入。
 
-速动比率 = (流动资产 - 存货) / 流动负债。Sheet 2的RAG上下文中，存货数据有时未被检索到，导致LLM提取时`存货`字段为null，下游无法计算速动比率。
-
-**当前保障链路：**
-1. ✅ Prompt硬化 → 会要求提取存货字段
-2. ✅ 提取重试 → 会尝试补全存货字段
-3. ❌ **RAG上下文中确实没有存货数据时** → 重试也无法凭空提取
-4. ✅ 后处理注入 → 如果computed_data_str中没有速动比率，也无法注入
+**实际执行流程：**
+1. ✅ 缓存中有流动比率 = 1.20
+2. ✅ LLM生成摘要时未包含流动比率
+3. ❌ `_inject_missing_data` 检查 "1.20" 是否在摘要中 → 在文本其他地方找到了 "1.20" → 误判为已包含
+4. ❌ 不触发注入 → 摘要中缺失流动比率
 
 ---
 
 ## 修复方案
 
-### 方案A: 扩展注入逻辑覆盖所有指标（推荐，低风险）
+### 方案A: 双重匹配 — 指标名称+数值同时检查（推荐，最小改动）
 
-将EPS、ROE等非计算字段也纳入`computed_data_str`，使注入机制能覆盖。
-
-**修改文件:** `src/financial_report_ai_assistant/api/analysis.py`
+修改 `_inject_missing_data`，要求**指标名称和数值同时出现**才算真正包含：
 
 ```python
-# 在 _compute_summary_ratios() 中，将非计算字段也加入结果
-# 从 raw_data 中直接提取的字段（非计算得出）
-DIRECT_FIELDS = {
-    "EPS": "基本每股收益",  # 从财报直接提取
-}
-
-# 在 generate_report_summary() 中，将这些字段也加入 computed_data_str
-if raw_data.get("基本每股收益"):
-    computed["EPS"] = f"{raw_data['基本每股收益']}元/股"
+def _inject_missing_data(summary: str, computed_data_str: str) -> str:
+    """后处理：检查摘要是否包含所有已计算的数据，缺失则补充。"""
+    # ...
+    for key, value in computed_items:
+        value_clean = value.replace(",", "").replace(" ", "")
+        # 【修复】必须同时包含指标名称和数值，才算真正包含
+        if key not in summary or value_clean not in summary:
+            missing.append((key, value))
+    # ...
 ```
 
-**优点:** 零新依赖，改动小
-**缺点:** 需要手动维护字段列表
+**优点:** 改动极小（1行代码），立即生效
+**缺点:** 如果LLM用不同名称展示指标（如"流动资金比率"而非"流动比率"），仍可能误判
 
-### 方案B: 引入instructor库强制结构化输出（彻底解决）
+### 方案B: 模板注入 — 不依赖后处理，直接在prompt中强制表格行
+
+在摘要生成模板中，用 Jinja/Python 直接生成表格行，不依赖LLM：
+
+```python
+# 在 data_section 中直接生成 Markdown 表格行
+table_rows = []
+for k, v in computed_metrics.items():
+    table_rows.append(f"| {k} | {v} | - | - |")
+forced_table = "\n".join(table_rows)
+```
+
+**优点:** 100%保证所有指标出现在表格中
+**缺点:** 表格格式由代码控制，不够灵活
+
+### 方案C: 引入instructor库强制结构化输出（彻底解决）
 
 使用`instructor`库 + Pydantic模型强制LLM返回包含所有字段的结构化数据。
 
-**修改文件:** 
-- `src/financial_report_ai_assistant/api/analysis.py`
-- `requirements.txt` (新增 `instructor`)
-
-```python
-import instructor
-from pydantic import BaseModel, Field
-from typing import Optional
-
-class ExtractedFinancials(BaseModel):
-    营业收入: Optional[float] = Field(None)
-    营业成本: Optional[float] = Field(None)
-    净利润: Optional[float] = Field(None)
-    上期营业收入: Optional[float] = Field(None)
-    上期净利润: Optional[float] = Field(None)
-    总资产: Optional[float] = Field(None)
-    负债总额: Optional[float] = Field(None)
-    流动资产: Optional[float] = Field(None)
-    流动负债: Optional[float] = Field(None)
-    存货: Optional[float] = Field(None)
-    基本每股收益: Optional[float] = Field(None)  # 新增
-    加权平均净资产收益率: Optional[float] = Field(None)  # 新增
-```
-
-**优点:** 100%保证字段存在（Pydantic默认值），自动重试
+**优点:** 根本解决LLM遗漏问题
 **缺点:** 新增依赖，需测试DeepSeek兼容性
-
-### 方案C: 扩大RAG检索覆盖存货数据
-
-针对Sheet 2速动比率缺失问题，在RAG检索阶段增加存货相关查询。
-
-**修改文件:** `src/financial_report_ai_assistant/api/analysis.py`
-
-```python
-# 在 FOCUS_QUERIES["general"] 中增加
-"存货 存货跌价准备 流动资产",
-```
-
-**优点:** 从源头解决数据缺失
-**缺点:** 增加检索成本，不解决EPS问题
-
-### 方案D: 摘要后处理验证+LLM补全
-
-摘要生成后，检查是否包含所有关键指标，缺失则用LLM补充一段。
-
-**优点:** 最灵活
-**缺点:** 增加一次LLM调用，延迟+成本
 
 ---
 
 ## 推荐实施路径
 
-1. **短期（立即）:** 方案A — 扩展`computed_data_str`覆盖EPS/ROE等直接字段
-2. **中期（下次迭代）:** 方案C — 扩大RAG检索覆盖存货数据
-3. **长期（架构优化）:** 方案B — 引入instructor库统一结构化输出
+1. **立即:** 方案A — 修改 `_inject_missing_data` 为双重匹配
+2. **短期:** 方案B — 模板注入作为兜底保障
+3. **长期:** 方案C — 引入instructor库
 
 ---
 
 ## 验收标准
 
-运行 `python run_full_tdd_tests.py`，概要一致性 ≥ 95% (当前87.0%)
+运行 `python run_full_tdd_tests.py`：
+- 问答通过率 = 100%（当前已达标）
+- 概要一致性 ≥ 95%（当前91.3%，目标：23/23 = 100%）
 
 ---
 
 ## 相关文件
 
-- `src/financial_report_ai_assistant/api/analysis.py` — 摘要生成主逻辑
+- `src/financial_report_ai_assistant/api/analysis.py` — `_inject_missing_data` 函数（L172-L210）
+- `src/financial_report_ai_assistant/services/financial_data_store.py` — 统一缓存模块
 - `run_full_tdd_tests.py` — TDD测试脚本
 - `memory/tdd-results-2026-06-05.md` — 测试结果记录
