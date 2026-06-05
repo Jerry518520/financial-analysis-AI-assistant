@@ -77,20 +77,140 @@ SUMMARY_EXTRACTION_PROMPT = """你是一位金融数据提取专家。请从以�
 8. 禁止用示例中的数值填充——下面的示例仅展示格式，不是真实数据
 
 【任务要求】：
-提取以下合并报表原始数据（示例仅展示JSON格式，不是真实数据）：
+输出必须包含以下10个字段，缺一不可，禁止省略任何字段：
 
-{{
-  "营业收入": <从片段中提取的原始数字或null>,
-  "营业成本": <从片段中提取的原始数字或null>,
-  "净利润": <从片段中提取的原始数字或null>,
-  "上期营业收入": <从片段中提取的原始数字或null>,
-  "上期净利润": <从片段中提取的原始数字或null>
-}}
+1. "营业收入" — 合并利润表中的营业收入（元）
+2. "营业成本" — 合并利润表中的营业成本（元）
+3. "净利润" — 归属于上市公司股东的净利润（元）
+4. "上期营业收入" — 上年同期营业收入（元）
+5. "上期净利润" — 上年同期净利润（元）
+6. "总资产" — 合并资产负债表中的资产总计（元）
+7. "负债总额" — 合并资产负债表中的负债合计（元）
+8. "流动资产" — 合并资产负债表中的流动资产合计（元）
+9. "流动负债" — 合并资产负债表中的流动负债合计（元）
+10. "存货" — 合并资产负债表中的存货（元）
+
+找不到的字段必须设为 null，禁止省略。
+
+示例（仅展示格式，不是真实数据）：
+{{"营业收入": 133895500000, "营业成本": 92149800000, "净利润": 5617700000, "上期营业收入": 121298800000, "上期净利润": 8424800000, "总资产": 217739400000, "负债总额": 142098100000, "流动资产": 150000000000, "流动负债": 85000000000, "存货": 30000000000}}
 
 严格按上述JSON格式输出，不要有任何其他文字。"""
 
 # 上下文最大字符数限制（防止超出 DeepSeek 上下文窗口）
 MAX_CONTEXT_CHARS = 30000
+
+# 摘要提取必须包含的字段（用于验证和重试）
+SUMMARY_REQUIRED_FIELDS = ["营业收入", "营业成本", "净利润", "总资产", "负债总额",
+                           "流动资产", "流动负债", "存货", "上期营业收入", "上期净利润"]
+
+
+def _parse_extraction_json(raw_response: str) -> dict:
+    """从LLM响应中解析JSON，支持纯JSON和markdown包裹的JSON"""
+    try:
+        return json.loads(raw_response)
+    except json.JSONDecodeError:
+        match = re.search(r'\{[\s\S]*\}', raw_response)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+    return {}
+
+
+async def _extract_with_retry(context: str, max_retries: int = 2) -> dict:
+    """提取财务数据，缺失字段自动重试补全。
+
+    策略：
+    1. 首次完整提取
+    2. 检查缺失字段，针对性重试
+    3. 合并结果（不覆盖已有值）
+    """
+    extraction_prompt = ChatPromptTemplate.from_template(SUMMARY_EXTRACTION_PROMPT)
+    extraction_chain = extraction_prompt | get_llm() | StrOutputParser()
+
+    # 首次提取
+    raw_response = await asyncio.to_thread(extraction_chain.invoke, {"context": context})
+    raw_data = _parse_extraction_json(raw_response)
+
+    if not raw_data:
+        return raw_data
+
+    # 重试缺失字段
+    for attempt in range(max_retries):
+        missing = [f for f in SUMMARY_REQUIRED_FIELDS if f not in raw_data or raw_data[f] is None]
+        if not missing:
+            break
+
+        print(f"🔄 第{attempt+1}次重试，补全缺失字段: {', '.join(missing)}")
+        # 构造针对性重试prompt，只问缺失字段
+        retry_context = context[:12000]  # 缩短上下文避免token浪费
+        retry_prompt = f"""你是一位金融数据提取专家。上一次提取缺少以下字段：{', '.join(missing)}
+
+请仅从以下财报片段中提取这些字段，以JSON格式返回。找不到的字段设为null。
+金额单位：元，直接提取原始数字。
+
+【财报片段】：
+{retry_context}
+
+严格按JSON格式输出，不要有任何其他文字。"""
+
+        retry_response = await asyncio.to_thread(
+            lambda p=retry_prompt: (ChatPromptTemplate.from_template("{query}") | get_llm() | StrOutputParser()).invoke({"query": p})
+        )
+        retry_data = _parse_extraction_json(retry_response)
+
+        # 合并结果（不覆盖已有值）
+        for k, v in retry_data.items():
+            if k in SUMMARY_REQUIRED_FIELDS and (k not in raw_data or raw_data[k] is None):
+                raw_data[k] = v
+
+    return raw_data
+
+
+def _inject_missing_data(summary: str, computed_data_str: str) -> str:
+    """后处理：检查摘要是否包含所有已计算的数据，缺失则补充。
+
+    策略：从 computed_data_str 中提取每个指标，检查摘要中是否包含其数值。
+    如果缺失，在摘要末尾追加一个数据补充表。
+    """
+    import re
+
+    # 解析 computed_data_str 中的指标和数值
+    # 格式："- 毛利率: 31.28%" 或 "- 营业收入_亿元: 1338.95亿元"
+    computed_items = []
+    for line in computed_data_str.strip().split("\n"):
+        line = line.strip()
+        if line.startswith("- ") and ":" in line:
+            key = line[2:line.index(":")].strip()
+            value = line[line.index(":") + 1:].strip()
+            computed_items.append((key, value))
+
+    if not computed_items:
+        return summary
+
+    # 检查哪些指标在摘要中缺失
+    missing = []
+    for key, value in computed_items:
+        # 提取数值部分（去掉百分号、亿元等）
+        value_clean = value.replace(",", "").replace(" ", "")
+        # 检查摘要中是否包含该数值
+        if value_clean not in summary.replace(",", "").replace(" ", ""):
+            missing.append((key, value))
+
+    if not missing:
+        return summary
+
+    # 追加补充数据表
+    supplement = "\n\n### 补充：系统精确计算的财务指标\n\n| 指标 | 数值 |\n| :--- | :--- |\n"
+    for key, value in missing:
+        supplement += f"| **{key}** | {value} |\n"
+    supplement += "\n*以上数据由系统根据合并报表原始数据精确计算得出，与对话问答中的计算结果完全一致。*\n"
+
+    print(f"📌 后处理：补充了 {len(missing)} 个缺失指标到摘要: {[k for k, v in missing]}")
+    return summary + supplement
+
 
 @router.post("/analyze/summary")
 async def generate_report_summary(request: AnalysisRequest):
@@ -130,26 +250,15 @@ async def generate_report_summary(request: AnalysisRequest):
     computed_data_str = ""
     try:
         print("📊 正在提取原始财务数据...")
-        extraction_prompt = ChatPromptTemplate.from_template(SUMMARY_EXTRACTION_PROMPT)
-        extraction_chain = extraction_prompt | get_llm() | StrOutputParser()
-        raw_response = await asyncio.to_thread(extraction_chain.invoke, {"context": full_context})
-
-        # 解析 JSON（与雷达图相同的容错逻辑）
-        raw_data = None
-        try:
-            raw_data = json.loads(raw_response)
-        except json.JSONDecodeError:
-            match = re.search(r'\{[\s\S]*\}', raw_response)
-            if match:
-                try:
-                    raw_data = json.loads(match.group())
-                except json.JSONDecodeError:
-                    pass
+        raw_data = await _extract_with_retry(full_context, max_retries=2)
 
         if raw_data and isinstance(raw_data, dict):
             # 打印提取的原始数据（调试用）
             extracted_summary = {k: v for k, v in raw_data.items() if v is not None}
+            missing_fields = [f for f in SUMMARY_REQUIRED_FIELDS if f not in raw_data or raw_data[f] is None]
             print(f"📊 LLM 提取的原始数据: {extracted_summary}")
+            if missing_fields:
+                print(f"⚠️ 以下字段未提取到（RAG上下文中可能缺失）: {', '.join(missing_fields)}")
 
             # 检查是否所有关键字段都是 null（LLM 可能没有认真提取）
             non_null_count = sum(1 for k in ["营业收入", "营业成本", "净利润"] if raw_data.get(k) is not None)
@@ -211,6 +320,12 @@ async def generate_report_summary(request: AnalysisRequest):
 例如：**贵州茅台 2024年年度报告**
 公司名称和年份必须从下方检索到的财报片段中提取，禁止编造。
 
+【数据格式要求（必须严格遵守）】：
+- 所有金额统一使用"亿元"为单位，保留2位小数，如"1338.95亿元"
+- 所有比率统一使用百分比，保留2位小数，如"25.36%"
+- 流动比率、速动比率使用倍数格式，保留2位小数，如"1.76"
+- 表格中的数值必须与【系统已精确计算的财务指标】中的数据完全一致，禁止修改或四舍五入
+
 【检索到的财报片段】：
 {context}
 {data_section}
@@ -243,7 +358,7 @@ async def generate_report_summary(request: AnalysisRequest):
 - 禁止编造任何数字，所有数据必须来自上述检索片段或系统已计算的数据"""
 
     ratio_instruction = (
-        "直接引用【系统已精确计算的财务指标】中的数据，禁止自行计算"
+        "直接引用【系统已精确计算的财务指标】中的**所有**数据，禁止自行计算。表格中必须包含所有已计算的指标（毛利率、净利率、资产负债率、流动比率、速动比率等），不得省略任何一项。"
         if computed_data_str
         else "如果有营业成本数据，计算毛利率等比率指标"
     )
@@ -258,6 +373,11 @@ async def generate_report_summary(request: AnalysisRequest):
             {"context": full_context, "data_section": data_section,
              "ratio_instruction": ratio_instruction, "focus_hint": focus_hint},
         )
+
+        # 后处理：检查摘要是否包含所有已计算的数据，缺失则补充
+        if computed_data_str:
+            summary = _inject_missing_data(summary, computed_data_str)
+
         cited = extract_cited_pages(summary)
         valid_cited = [p for p in cited if p in all_source_pages]
         source_pages = sorted(valid_cited) if valid_cited else sorted(all_source_pages)
@@ -481,6 +601,7 @@ def _compute_summary_ratios(raw: dict) -> dict:
     """
     from financial_report_ai_assistant.services.financial_calculator import (
         calculate_margin, calculate_growth_rate,
+        calculate_debt_ratio, calculate_current_ratio, calculate_quick_ratio,
     )
 
     metrics = {}
@@ -490,6 +611,11 @@ def _compute_summary_ratios(raw: dict) -> dict:
     净利润 = raw.get("净利润")
     上期营业收入 = raw.get("上期营业收入")
     上期净利润 = raw.get("上期净利润")
+    总资产 = raw.get("总资产")
+    负债总额 = raw.get("负债总额")
+    流动资产 = raw.get("流动资产")
+    流动负债 = raw.get("流动负债")
+    存货 = raw.get("存货")
 
     # 盈利能力（与对话工具完全一致的计算函数）
     if 营业收入 and 营业成本:
@@ -503,12 +629,25 @@ def _compute_summary_ratios(raw: dict) -> dict:
     if 净利润 and 上期净利润:
         metrics["净利润增长率"] = calculate_growth_rate(净利润, 上期净利润)
 
+    # 偿债能力（与对话工具完全一致的计算函数）
+    if 负债总额 and 总资产:
+        metrics["资产负债率"] = calculate_debt_ratio(负债总额, 总资产)
+    if 流动资产 and 流动负债:
+        metrics["流动比率"] = calculate_current_ratio(流动资产, 流动负债)
+    if 流动资产 is not None and 存货 is not None and 流动负债:
+        metrics["速动比率"] = calculate_quick_ratio(流动资产, 存货, 流动负债)
+
     # 格式化为百分比字符串，方便摘要 prompt 直接引用
+    # 流动比率和速动比率是倍数（如1.76），不是百分比，需要特殊处理
+    RATIO_KEYS = {"流动比率", "速动比率"}
     formatted = {}
     from financial_report_ai_assistant.services.financial_calculator import format_percentage
     for k, v in metrics.items():
         if isinstance(v, (int, float)):
-            formatted[k] = format_percentage(v)
+            if k in RATIO_KEYS:
+                formatted[k] = f"{v:.2f}"
+            else:
+                formatted[k] = format_percentage(v)
         else:
             formatted[k] = str(v)
 
@@ -523,6 +662,8 @@ def _compute_summary_ratios(raw: dict) -> dict:
         formatted["上期营业收入_亿元"] = f"{上期营业收入 / 1e8:.2f}亿元"
     if 上期净利润:
         formatted["上期净利润_亿元"] = f"{上期净利润 / 1e8:.2f}亿元"
+    if 总资产:
+        formatted["总资产_亿元"] = f"{总资产 / 1e8:.2f}亿元"
 
     return formatted
 
