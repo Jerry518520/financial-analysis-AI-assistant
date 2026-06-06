@@ -62,23 +62,21 @@ cd financial-analysis-AI-assistant
 复制环境变量模板：
 
 ```bash
-# Windows CMD
-copy env.template .env
-
-# Windows PowerShell / Mac / Linux
-cp env.template .env
+cp env.template .env   # Windows CMD 用: copy env.template .env
 ```
 
 编辑 `.env` 文件，填入你的 API Key：
 
 ```env
-DEEPSEEK_API_KEY=sk-你的key
-LLAMA_CLOUD_API_KEY=llx-你的key
+DEEPSEEK_API_KEY=sk-你的key        # 必填
+LLAMA_CLOUD_API_KEY=llx-你的key    # 可选，不填则降级为纯 PyMuPDF 解析
 ```
 
 **获取方式**：
 - DeepSeek API Key: https://platform.deepseek.com/
-- LlamaCloud API Key: https://cloud.llamaindex.ai/ （免费）
+- LlamaCloud API Key: https://cloud.llamaindex.ai/ （免费，用于增强表格解析）
+
+> **可选配置**：`FORCE_LLAMA_PARSE=true` 可强制所有表格页走 LlamaParse（默认先尝试 PyMuPDF，失败再用 LlamaParse）。
 
 ### 第 4 步：（可选）预下载加速
 
@@ -96,14 +94,15 @@ download_wheels.bat
 ### 第 5 步：构建并启动
 
 ```bash
-docker-compose build
-docker-compose up
+docker compose up --build
 ```
 
 首次构建时间参考：
 - **有预下载**: 5-10 分钟
 - **无预下载**: 30-60 分钟（取决于网速）
 - **后续构建**: 2-5 分钟（有缓存）
+
+> 后台运行加 `-d`：`docker compose up --build -d`
 
 ### 第 6 步：访问应用
 
@@ -113,8 +112,11 @@ docker-compose up
 ### 停止应用
 
 ```bash
-# Ctrl + C 停止，然后：
-docker-compose down
+# 前台运行：Ctrl + C 停止，然后：
+docker compose down
+
+# 后台运行：
+docker compose down
 ```
 
 ---
@@ -123,8 +125,19 @@ docker-compose down
 
 ```bash
 git pull
-docker-compose build
-docker-compose up
+docker compose up --build -d
+```
+
+> ⚠️ **必须加 `--build`**，否则 `docker compose up` 会使用旧镜像，代码修复不会生效。
+
+### 遇到数据异常？清除缓存重来
+
+如果更新后计算结果仍不正确，可能是旧缓存导致的。清除缓存后重新上传 PDF：
+
+```bash
+docker compose down
+rm -rf cache_data faiss_index     # Windows CMD: rmdir /s /q cache_data faiss_index
+docker compose up --build -d
 ```
 
 ---
@@ -190,7 +203,7 @@ A: 确保两个容器都在运行。Docker 内前端通过 `http://backend:8000`
 
 **Q: 如何查看日志？**
 
-A: `docker-compose logs -f` 查看实时日志，`docker-compose logs backend` 只看后端。
+A: `docker compose logs -f` 查看实时日志，`docker compose logs backend` 只看后端。
 
 ---
 

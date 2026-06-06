@@ -21,25 +21,30 @@ cd financial-analysis-AI-assistant
 
 ---
 
-## 二、启动服务（3步）
+## 二、启动服务（2步）
 
-### 第1步：构建镜像（只需一次，约10-20分钟）
+### 第1步：构建并启动（首次约10-20分钟）
 ```bash
-docker compose build --no-cache
+docker compose up --build -d
 ```
 
-### 第2步：启动容器
-```bash
-docker compose up -d
-```
+> ⚠️ **更新代码后必须重新 build**：如果之前已经构建过，执行 `git pull` 拉取最新代码后，**必须** `docker compose up --build -d`，否则运行的还是旧镜像，修复不会生效。单纯 `docker compose up` 不会重建镜像。
 
-### 第3步：验证服务
+> ⚠️ **计算结果异常？** 如果更新后数据仍不对，需要清除旧缓存（Docker 卷不会随 rebuild 自动清除）：
+> ```bash
+> docker compose down
+> rm -rf cache_data faiss_index
+> docker compose up --build -d
+> ```
+> 然后重新上传 PDF。
+
+### 第2步：验证服务
 - 浏览器打开 http://localhost:8501 ，应看到前端界面
 - 浏览器打开 http://localhost:8000 ，应返回 `{"status": "ok"}`
 
 ---
 
-## 三、自动化测试（168项）
+## 三、自动化测试
 
 **另开命令行窗口**，进入项目目录执行：
 
@@ -49,10 +54,10 @@ docker compose exec backend poetry run pytest tests/ -v
 
 ### 预期结果
 ```
-============================== 168 passed in 25s ==============================
+============================== XXX passed in XXs ==============================
 ```
 
-**看到 `168 passed` 即全部通过 ✅**
+**看到 `passed` 且无 `FAILED` 即全部通过 ✅**（测试数量随版本迭代可能变化）
 
 ### 常见问题
 | 情况 | 处理 |
@@ -130,17 +135,17 @@ docker compose exec backend poetry run pytest tests/ -v
 
 ```bash
 # 停止服务
-docker compose stop
-
-# 停止并删除容器
 docker compose down
 
-# 重新启动
+# 重新构建并启动
+docker compose up --build -d
+
+# 仅启动（不重新构建）
 docker compose up -d
 
 # 查看日志（排查问题）
-docker compose logs backend
-docker compose logs frontend
+docker compose logs -f backend
+docker compose logs -f frontend
 ```
 
 ---
@@ -292,4 +297,4 @@ docker compose logs frontend
 
 ---
 
-*文档版本：2026-03-31*
+*文档版本：2026-06-06*

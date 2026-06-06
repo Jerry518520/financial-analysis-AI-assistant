@@ -231,19 +231,9 @@ def _answer_from_cache(question: str, cached: dict) -> str:
 @app.post("/chat")
 async def chat_with_report(request: ChatRequest):
     try:
-        # 【新增】检查统一缓存：简单事实性问题直接从缓存回答
-        from financial_report_ai_assistant.services.financial_data_store import get_current_cached_data
-        cached = get_current_cached_data()
-        if cached and cached.get("computed_metrics"):
-            answer = _answer_from_cache(request.question, cached)
-            if answer:
-                print(f"[CHAT] 缓存命中: {request.question} -> 直接返回")
-                return {
-                    "answer": answer,
-                    "source_page": 0,
-                    "source_pages": cached.get("source_pages", []),
-                    "pdf_hash": cached.get("pdf_hash", ""),
-                }
+        # 缓存拦截已移除：所有问题统一走 Agent 流程，保证回答质量一致
+        # （有年份标注、分析深度、精确溯源）
+        # 预提取数据仍会注入 Agent 的 system prompt，Agent 可以利用
 
         # RAG 检索（当前问题，使用较低阈值提高中文财务术语召回率）
         rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 12, 0.3)

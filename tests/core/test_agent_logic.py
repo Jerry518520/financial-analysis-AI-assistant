@@ -125,7 +125,7 @@ class TestAgentNode:
 
         assert "tool_results" in result
         assert len(result["tool_results"]) > 0
-        assert "工具调用" in result["tool_results"][0]
+        assert "计算结果" in result["tool_results"][0]
         assert result["iteration"] == 1
 
     @patch("financial_report_ai_assistant.core.agent.create_llm")

@@ -20,7 +20,7 @@ def get_llm():
             model="deepseek-chat",
             api_key=api_key,
             base_url="https://api.deepseek.com",
-            temperature=0.3,
+            temperature=0.1,
             timeout=60,
             max_retries=2,
         )
