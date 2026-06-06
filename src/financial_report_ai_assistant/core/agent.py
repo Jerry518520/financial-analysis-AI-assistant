@@ -96,9 +96,9 @@ def tool_calculate_quick_ratio(current_assets: float, inventory: float, current_
     return f"{res:.2f}"
 
 @tool
-def tool_calculate_turnover(revenue: float, total_assets: float) -> str:
-    """计算资产周转率。输入营业收入和总资产。"""
-    res = calculate_turnover(revenue, total_assets)
+def tool_calculate_turnover(revenue: float, total_assets: float, beginning_total_assets: float = None) -> str:
+    """计算资产周转率。输入营业收入和期末总资产金额；如有期初总资产也请传入，系统会自动使用平均总资产口径。"""
+    res = calculate_turnover(revenue, total_assets, beginning_total_assets)
     if isinstance(res, str):
         return res
     return f"{res:.2f} 次"
@@ -326,13 +326,14 @@ def agent_node(state: AgentState):
 - 如果找不到某个参数的数据，直接用自然语言回答，不要调用工具
 - 每次最多调用 2 个工具
 - 【关键】优先使用历史对话中已计算的数据，避免重复计算
+- 【禁止暴露内部细节】回答中严禁提及任何工具函数名称（如 tool_calculate_turnover、tool_calculate_margin 等）、工具调用过程或"在历史对话中已经调用过工具"等表述。对用户而言，所有计算结果都是你直接分析得出的，不需要说明数据是通过工具计算的
 - 【数据校验】所有数值必须来自背景信息原文，禁止编造或推测任何数字
 - 【来源标注】回答中引用的每个数据必须标注来源页码，格式为"根据第X页数据，XXX为YYY"。每个数据片段前已标注[来源：第X页]，请直接使用该页码，不要自行推断
 - 【数据优先级】当背景信息中同时包含合并报表和母公司报表数据时，必须优先使用合并报表数据进行计算和分析
 - 【直接引用优先】如果背景信息中直接给出了用户询问的指标数值（如每股收益EPS、每股净资产、市盈率、毛利率、净利率、同比增长率等），直接引用该数值，不要尝试用公式计算。特别是当文本中出现"同比增长X%"、"同比减少X%"、"毛利率为X%"等表述时，这是已计算好的指标值，应直接引用，无需调用工具重新计算。只有当背景信息中完全没有直接给出该指标时，才调用计算工具
 - 【衍生指标计算】以下指标通常需要计算，如果背景信息中未直接给出，应使用工具计算：
   - 净利率 = 净利润 / 营业收入（使用 tool_calculate_margin）
-  - 资产周转率 = 营业收入 / 总资产（使用 tool_calculate_turnover）
+  - 资产周转率 = 营业收入 / 平均总资产（使用 tool_calculate_turnover，同时传入期初总资产以使用平均口径；如无期初数据则回退到简化口径）
   - 存货周转率 = 营业成本 / 存货（使用 tool_calculate_inventory_turnover，同时传入期初存货以使用平均口径；如无期初数据则回退到简化口径）
   - EPS = 净利润 / 总股本（使用 tool_calculate_eps），但如果背景信息中已直接给出"基本每股收益"或"稀释每股收益"则直接引用
   - ROE = 净利润 / 平均净资产（使用 tool_calculate_roe，同时传入期初净资产以使用平均口径；如无期初数据则回退到简化口径）
@@ -388,16 +389,16 @@ def agent_node(state: AgentState):
             # 校验参数：确保数值类型正确，防止 LLM 传入字符串/null
             validated_args = _validate_tool_args(tool_name, tool_args)
             if not validated_args:
-                new_results.append(f"[工具调用跳过] {tool_name}: 参数校验失败，无有效数值参数")
+                new_results.append(f"[计算跳过] 参数校验失败，无有效数值参数")
                 print(f"⚠️ 工具参数校验失败: {tool_name}({tool_args})")
                 continue
 
             try:
                 result = tool_map[tool_name].invoke(validated_args)
-                new_results.append(f"[工具调用] {tool_name}({tool_args}) → {result}")
+                new_results.append(f"[计算结果] {result}")
                 print(f"🔧 工具调用成功: {tool_name}({tool_args}) → {result}")
             except Exception as e:
-                new_results.append(f"[工具调用失败] {tool_name}: {str(e)}")
+                new_results.append(f"[计算失败] {str(e)}")
                 print(f"❌ 工具调用失败: {tool_name}: {e}")
 
         return {
@@ -465,6 +466,7 @@ def answer_node(state: AgentState):
 1. 直接回答用户的问题，不要有任何开场白、问候语或自我介绍
 2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头，第一句话就是实质性内容
 3. 包含具体的数值和计算结果，每个数据必须来自【背景信息】或【工具执行结果】，禁止编造任何数字
+4. 【禁止暴露内部细节】严禁提及任何工具函数名称（如 tool_calculate_turnover 等）、工具调用过程或"通过工具计算"等表述。所有计算结果都以"根据财务数据分析"的方式呈现
 4. 如有需要，给出分析和建议
 5. 使用 Markdown 格式
 6. 【关键】如果背景信息和工具结果中没有足够的数据回答问题，必须明确说明"财报中未找到相关数据"，禁止推测或编造
@@ -611,6 +613,7 @@ def run_lightweight_query(query: str, context: str = "") -> str:
 2. 禁止以"好的"、"作为一名金融分析师"、"我将..."等开头
 3. 如果背景信息中没有相关数据，请如实告知"财报中未找到相关数据"，禁止编造任何数字
 4. 包含具体的数值（如有），每个数据必须来自背景信息原文，禁止推测
+5. 【禁止暴露内部细节】严禁提及任何工具函数名称、工具调用过程或"通过工具计算"等表述
 5. 所有引用的数值必须标注来源页码，格式为"根据第X页数据，XXX为YYY"。每个数据片段前已标注[来源：第X页]，请直接使用该页码
 6. 使用 Markdown 格式
 7. 所有章节标题统一使用 Markdown 二级标题格式，如：## 一、债务结构与规模

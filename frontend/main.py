@@ -553,7 +553,8 @@ def call_chat_api(prompt, history=None):
     if res.status_code == 200:
         data = res.json()
         ai_msg = data.get("answer", "") or ""
-        source_pages = data.get("source_pages", [data.get("source_page", None)])
+        best_page = data.get("source_page", None)
+        source_pages = data.get("source_pages", [best_page])
         # 确保列表中的 None 被过滤掉
         source_pages = [p for p in source_pages if p is not None]
 
@@ -571,13 +572,13 @@ def call_chat_api(prompt, history=None):
             recommended = recommendations
         else:
             recommended = get_recommended_questions(prompt)
-        return ai_msg, source_pages, recommended
+        return ai_msg, source_pages, recommended, best_page
     else:
         try:
             error_detail = res.json().get("error", "未知错误")
         except Exception:
             error_detail = f"HTTP {res.status_code}"
-        return f"❌ 服务器错误：{error_detail}", [], None
+        return f"❌ 服务器错误：{error_detail}", [], None, None
 
 
 def _clean_ai_message(text):
@@ -591,39 +592,61 @@ def _clean_ai_message(text):
     return text
 
 
-def _render_source_images(source_pages, btn_key):
-    """渲染溯源按钮，点击后展开来源页图片（支持多页），展开后可收起"""
+def _render_source_images(source_pages, btn_key, best_page=None):
+    """渲染溯源：主要来源页默认展示，其他来源折叠"""
     if not source_pages:
         return
 
-    if len(source_pages) == 1:
-        label = f"📄 查看来源（第 {source_pages[0]} 页）"
-    else:
-        pages_str = "、".join(str(p) for p in source_pages)
-        label = f"📄 查看来源（第 {pages_str} 页）"
+    # 确定主要来源页
+    primary = best_page if (best_page and best_page in source_pages) else source_pages[0]
+    others = [p for p in source_pages if p != primary]
 
-    is_expanded = st.session_state.get("_expanded_source") == btn_key
+    # --- 主要来源：折叠展示 ---
+    primary_key = f"{btn_key}_primary"
+    primary_expanded = st.session_state.get("_expanded_source") == primary_key
+    others_label = f"（其他：第{'、'.join(str(p) for p in others)}页）" if others else ""
+    primary_label = f"⭐ 主要来源：第 {primary} 页 {others_label}"
 
-    if is_expanded:
-        # 已展开：显示"收起"按钮
-        if st.button("🔼 收起来源", key=f"{btn_key}_close", use_container_width=True):
+    if primary_expanded:
+        if st.button("🔼 收起来源", key=f"{primary_key}_close", use_container_width=True):
             st.session_state.pop("_expanded_source", None)
             st.rerun()
-        for page in source_pages:
-            try:
-                # 服务端获取图片字节（避免 Docker 内部 URL 对浏览器不可达）
-                resp = requests.get(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", timeout=10)
-                if resp.status_code == 200:
-                    st.image(resp.content, caption=f"📄 来源：第 {page} 页")
-                else:
-                    st.caption(f"⚠️ 第 {page} 页溯源图片加载失败 (HTTP {resp.status_code})")
-            except Exception as e:
-                st.caption(f"⚠️ 第 {page} 页溯源图片加载失败: {e}")
+        try:
+            resp = requests.get(f"{API_URL}/highlight?page={primary}&x=0&y=0&w=600&h=800", timeout=10)
+            if resp.status_code == 200:
+                st.image(resp.content, caption=f"⭐ 主要来源：第 {primary} 页")
+            else:
+                st.caption(f"⚠️ 第 {primary} 页溯源图片加载失败 (HTTP {resp.status_code})")
+        except Exception as e:
+            st.caption(f"⚠️ 第 {primary} 页溯源图片加载失败: {e}")
     else:
-        # 未展开：显示"查看来源"按钮
-        if st.button(label, key=btn_key):
-            st.session_state["_expanded_source"] = btn_key
+        if st.button(primary_label, key=primary_key):
+            st.session_state["_expanded_source"] = primary_key
             st.rerun()
+
+    # --- 其他来源：折叠展示 ---
+    if others:
+        others_key = f"{btn_key}_others"
+        others_expanded = st.session_state.get("_expanded_others") == others_key
+        pages_str = "、".join(str(p) for p in others)
+
+        if others_expanded:
+            if st.button("🔼 收起其他来源", key=f"{others_key}_close", use_container_width=True):
+                st.session_state.pop("_expanded_others", None)
+                st.rerun()
+            for page in others:
+                try:
+                    resp = requests.get(f"{API_URL}/highlight?page={page}&x=0&y=0&w=600&h=800", timeout=10)
+                    if resp.status_code == 200:
+                        st.image(resp.content, caption=f"📄 来源：第 {page} 页")
+                    else:
+                        st.caption(f"⚠️ 第 {page} 页溯源图片加载失败 (HTTP {resp.status_code})")
+                except Exception as e:
+                    st.caption(f"⚠️ 第 {page} 页溯源图片加载失败: {e}")
+        else:
+            if st.button(f"📄 其他来源（第 {pages_str} 页）", key=others_key):
+                st.session_state["_expanded_others"] = others_key
+                st.rerun()
 
 
 def _render_recommended(rec_list, msg_idx):
@@ -862,17 +885,18 @@ def _process_chat(prompt):
         progress_bar = st.progress(0)
         progress_text = st.empty()
         _auto_scroll()  # 用户消息+AI思考状态已渲染，立刻滚到底
-        chat_result = {"ai_msg": None, "source_pages": [], "recommended": None, "error": None}
+        chat_result = {"ai_msg": None, "source_pages": [], "recommended": None, "best_page": None, "error": None}
 
         # 【关键修复】提取历史对话记录传递给后端
         conversation_history = _extract_history_for_api()
 
         def _call_api():
             try:
-                ai_msg, source_pages, recommended = call_chat_api(prompt, conversation_history)
+                ai_msg, source_pages, recommended, best_page = call_chat_api(prompt, conversation_history)
                 chat_result["ai_msg"] = ai_msg
                 chat_result["source_pages"] = source_pages
                 chat_result["recommended"] = recommended
+                chat_result["best_page"] = best_page
             except Exception as e:
                 chat_result["error"] = str(e)
 
@@ -906,6 +930,7 @@ def _process_chat(prompt):
         ai_msg = chat_result["ai_msg"]
         source_pages = chat_result["source_pages"]
         recommended = chat_result["recommended"]
+        best_page = chat_result["best_page"]
 
         if ai_msg:
             progress_bar.progress(100, text="✅ 回答完成！")
@@ -916,10 +941,11 @@ def _process_chat(prompt):
                 "role": "assistant",
                 "content": ai_msg,
                 "source_pages": source_pages,
+                "best_page": best_page,
                 "recommended": recommended,
                 "source_btn_key": btn_key,
             })
-            _render_source_images(source_pages, btn_key)
+            _render_source_images(source_pages, btn_key, best_page)
             _render_recommended(recommended, msg_idx)
         else:
             progress_bar.empty()
@@ -1258,7 +1284,7 @@ else:
                 st.markdown(content)
                 if msg["role"] == "assistant":
                     btn_key = msg.get("source_btn_key", f"source_hist_{idx}")
-                    _render_source_images(msg.get("source_pages", []), btn_key)
+                    _render_source_images(msg.get("source_pages", []), btn_key, msg.get("best_page"))
                     # 回答进行中时，隐藏所有历史消息的推荐按钮（避免重复显示）
                     if not is_processing:
                         _render_recommended(msg.get("recommended"), idx)

@@ -678,7 +678,7 @@
         });
 
         // 核心复原：全量的消息替换函数
-        const replaceLoadingWithMessage = (id, aiMsg, sourcePages, recommendations) => {
+        const replaceLoadingWithMessage = (id, aiMsg, sourcePages, recommendations, bestPage) => {
             const el = document.getElementById(id);
             if (!el) return;
 
@@ -689,10 +689,13 @@
             if (sourcePages && sourcePages.length > 0) {
                 const validPages = sourcePages.filter(p => p !== null);
                 if (validPages.length > 0) {
+                    const primary = bestPage && validPages.includes(bestPage) ? bestPage : validPages[0];
+                    const others = validPages.filter(p => p !== primary);
+                    const othersLabel = others.length > 0 ? ` · 其他：第${others.join('、')}页` : '';
                     sourcesHtml = `
                         <div class="mt-3 border-t border-gray-200 pt-3">
-                            <button onclick="toggleSource(this, [${validPages.join(',')}])" class="text-xs text-secondary hover:text-[#b08d27] flex items-center gap-1 font-medium bg-secondary/10 px-2 py-1 rounded transition-colors">
-                                <i class="fa-regular fa-file-image"></i> 查看来源 (第 ${validPages.join('、')} 页)
+                            <button onclick="toggleSource(this, [${validPages.join(',')}], ${primary})" class="text-xs text-secondary hover:text-[#b08d27] flex items-center gap-1 font-medium bg-secondary/10 px-2 py-1 rounded transition-colors">
+                                <i class="fa-regular fa-file-image"></i> 查看来源（⭐ 第${primary}页${others.length > 0 ? ' · 其他：第' + others.join('、') + '页' : ''}）
                             </button>
                             <div class="source-images-container hidden mt-3 grid gap-3"></div>
                         </div>
@@ -725,8 +728,8 @@
             scrollToBottom(chatContainer);
         };
 
-        // 核心复原：全量的图片拉取与双击绑定逻辑
-        window.toggleSource = async (btn, pages) => {
+        // 核心复原：全量的图片拉取与双击绑定逻辑（支持主要来源高亮）
+        window.toggleSource = async (btn, pages, primaryPage) => {
             const container = btn.nextElementSibling;
             if (container.classList.contains('hidden')) {
                 container.classList.remove('hidden');
@@ -735,14 +738,18 @@
                     container.innerHTML = '<div class="text-xs text-gray-400"><i class="fa-solid fa-spinner fa-spin"></i> 加载原图...</div>';
                     let imgs = '';
                     for (let page of pages) {
+                        const isPrimary = page === primaryPage;
+                        const borderClass = isPrimary ? 'border-2 border-amber-300' : 'border border-gray-200';
+                        const sizeClass = isPrimary ? 'max-w-md' : 'max-w-sm';
+                        const badge = isPrimary ? '<div class="mb-1"><span class="text-[11px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">⭐ 主要来源</span></div>' : '';
                         const imgUrl = `${API_URL}/highlight?page=${page}&x=0&y=0&w=600&h=800`;
-                        imgs += `<img src="${imgUrl}" class="w-full max-w-md border border-gray-200 rounded shadow-sm hover:shadow-md transition-shadow cursor-zoom-in" title="双击查看大图" alt="第${page}页" ondblclick="openImageModal(this.src)" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\\'text-xs text-red-500\\'>⚠️ 第 ${page} 页图片加载失败</span>';">`;
+                        imgs += `${badge}<img src="${imgUrl}" class="w-full ${sizeClass} ${borderClass} rounded shadow-sm hover:shadow-md transition-shadow cursor-zoom-in" title="双击查看大图 · 第${page}页${isPrimary ? ' · 主要来源' : ''}" alt="第${page}页" ondblclick="openImageModal(this.src)" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\\'text-xs text-red-500\\'>⚠️ 第 ${page} 页图片加载失败</span>';">`;
                     }
                     container.innerHTML = imgs;
                 }
             } else {
                 container.classList.add('hidden');
-                btn.innerHTML = `<i class="fa-regular fa-file-image"></i> 查看来源 (第 ${pages.join('、')} 页)`;
+                btn.innerHTML = `<i class="fa-regular fa-file-image"></i> 查看来源（⭐ 第${primaryPage || pages[0]}页${pages.length > 1 ? ' · 其他：第' + pages.filter(p => p !== primaryPage).join('、') + '页' : ''}）`;
             }
         };
 
@@ -822,7 +829,7 @@
                 chatHistory.push({ role: 'assistant', content: aiMsg });
                 
                 // 这里调用复原好的完整函数
-                replaceLoadingWithMessage(loadId, aiMsg, data.source_pages, data.recommendations);
+                replaceLoadingWithMessage(loadId, aiMsg, data.source_pages, data.recommendations, data.source_page);
 
             } catch (err) {
                 document.getElementById(loadId).innerHTML = `

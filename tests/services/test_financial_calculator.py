@@ -200,8 +200,21 @@ class TestCalculateTurnover:
     def test_normal(self):
         assert calculate_turnover(5000, 10000) == 0.5
 
+    def test_average_assets(self):
+        """使用平均总资产法：营收 / ((期初+期末)/2)"""
+        # 133895500000 / ((207325600000+217739400000)/2) = 0.6299 → 0.63
+        assert calculate_turnover(133895500000, 217739400000, 207325600000) == 0.63
+
+    def test_average_assets_with_none(self):
+        """beginning_total_assets=None 时回退到简化口径"""
+        assert calculate_turnover(5000, 10000, None) == 0.5
+
     def test_assets_zero(self):
         assert calculate_turnover(100, 0) == "无法计算（总资产为0）"
+
+    def test_avg_assets_zero(self):
+        """期初=0 时回退到简化口径，期末也为0则返回总资产为0"""
+        assert calculate_turnover(100, 0, 0) == "无法计算（总资产为0）"
 
 
 # ============================================================
