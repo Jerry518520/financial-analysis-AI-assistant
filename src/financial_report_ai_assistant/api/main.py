@@ -378,6 +378,53 @@ def _build_enhanced_context(current_context: str, history: list, current_questio
 
     return enhanced
 
+@app.post("/chat_debug")
+async def chat_debug(request: ChatRequest):
+    """Return answer + retrieved contexts (for RAGAS evaluation)"""
+    try:
+        rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 12, 0.3)
+        relevant_context = _inject_year_mapping(rag_result["context"])
+        page_num = rag_result["page_num"]
+        source_pages = rag_result.get("source_pages", [page_num])
+
+        if RAG_INDEX_BUILDING in relevant_context:
+            return {"answer": "新文档正在处理中，请稍等片刻后重试。",
+                    "contexts": [], "source_page": 1, "source_pages": []}
+
+        if RAG_NOT_FOUND in relevant_context and not request.conversation_history:
+            return {"answer": "财报中未找到与该问题相关的数据。",
+                    "contexts": [], "source_page": 1, "source_pages": []}
+
+        enhanced_context = _build_enhanced_context(
+            current_context=relevant_context,
+            history=request.conversation_history,
+            current_question=request.question,
+            request_pdf_hash=request.pdf_hash
+        )
+
+        from financial_report_ai_assistant.core.agent import is_simple_query, run_lightweight_query
+        if is_simple_query(request.question):
+            answer = await asyncio.to_thread(run_lightweight_query, request.question, enhanced_context)
+            if "未找到" in answer:
+                answer = await asyncio.to_thread(run_agent_query, request.question, enhanced_context)
+        else:
+            answer = await asyncio.to_thread(run_agent_query, request.question, enhanced_context)
+
+        # Split contexts into individual chunks for RAGAS
+        contexts = [c.strip() for c in relevant_context.split("\n---\n") if c.strip()]
+
+        return {
+            "answer": answer,
+            "contexts": contexts,
+            "source_page": page_num,
+            "source_pages": source_pages,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
+
+
 @app.get("/highlight")
 async def highlight_page(
     page: int = Query(1, ge=1, description="页码"),
