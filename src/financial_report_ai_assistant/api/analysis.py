@@ -206,9 +206,13 @@ def _compute_all_metrics(raw: dict) -> dict:
 
     # 直接提取的字段（非计算）
     if raw.get("基本每股收益") is not None:
-        metrics["EPS"] = f"{raw['基本每股收益']:.2f}元/股"
+        # 保留足够精度（最多4位小数，去除尾部0）
+        eps_val = raw['基本每股收益']
+        eps_str = f"{eps_val:.4f}".rstrip('0').rstrip('.')
+        metrics["EPS"] = f"{eps_str}元/股"
     if raw.get("加权平均净资产收益率") is not None:
-        metrics["ROE"] = format_percentage(raw["加权平均净资产收益率"])
+        # 原始数据已是百分比形式（如 7.58 表示 7.58%），直接格式化，不再乘100
+        metrics["ROE"] = f"{raw['加权平均净资产收益率']:.2f}%"
     elif 净利润 and 总资产 and 负债总额:
         # 财报未直接给出 ROE，用 Python 计算
         # 净资产 = 总资产 - 负债总额

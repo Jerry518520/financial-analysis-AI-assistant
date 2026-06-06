@@ -991,7 +991,7 @@ if 'result' not in st.session_state:
                     resp = requests.post(
                         f"{API_URL}/upload", files=files,
                         params={"parser": st.session_state.get("parser_choice_init", "llamaparse")},
-                        timeout=30,
+                        timeout=600,
                     )
                     if resp.status_code != 200:
                         progress.empty()
@@ -1054,7 +1054,7 @@ else:
                     resp = requests.post(
                         f"{API_URL}/upload", files=files,
                         params={"parser": st.session_state.get("parser_choice_re", "llamaparse")},
-                        timeout=30,
+                        timeout=600,
                     )
                     if resp.status_code != 200:
                         progress.empty()

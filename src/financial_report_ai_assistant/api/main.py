@@ -178,7 +178,7 @@ def _answer_from_cache(question: str, cached: dict) -> str:
     """尝试从缓存数据中回答简单事实性问题。返回None表示无法回答。"""
     metrics = cached.get("computed_metrics", {})
     raw = cached.get("raw_data", {})
-    if not metrics:
+    if not metrics and not raw:
         return None
 
     # 按关键词长度降序匹配（更精确的关键词优先）
@@ -203,6 +203,28 @@ def _answer_from_cache(question: str, cached: dict) -> str:
                         return f"根据已提取的财务数据，{base_name}为 **{value}**。"
                     return f"根据已提取的财务数据，{key}为 **{value}**。"
 
+    # 兜底：从 raw_data 中直接查找未计算的指标
+    if raw:
+        # EPS：直接从 raw_data 中获取
+        if "EPS" in question.upper() or "每股收益" in question:
+            eps_val = raw.get("基本每股收益")
+            if eps_val is not None:
+                result = f"根据已提取的财务数据，基本每股收益为 **{eps_val}元/股**"
+                稀释eps = raw.get("稀释每股收益")
+                if 稀释eps is not None:
+                    result += f"，稀释每股收益为 **{稀释eps}元/股**"
+                return result + "。"
+
+        # 资产周转率：从 raw_data 计算
+        if "资产周转率" in question:
+            营业收入 = raw.get("营业收入")
+            总资产 = raw.get("总资产")
+            if 营业收入 and 总资产 and 总资产 > 0:
+                from financial_report_ai_assistant.services.financial_calculator import calculate_turnover
+                turnover = calculate_turnover(营业收入, 总资产, raw.get("上期总资产"))
+                if turnover is not None:
+                    return f"根据已提取的财务数据，资产周转率约为 **{turnover:.2f}次**。"
+
     return None
 
 
@@ -225,7 +247,7 @@ async def chat_with_report(request: ChatRequest):
 
         # RAG 检索（当前问题，使用较低阈值提高中文财务术语召回率）
         rag_result = await asyncio.to_thread(query_rag_with_source, request.question, 12, 0.3)
-        relevant_context = rag_result["context"]
+        relevant_context = _inject_year_mapping(rag_result["context"])
         page_num = rag_result["page_num"]
         source_pages = rag_result.get("source_pages", [page_num])
 
@@ -290,6 +312,47 @@ async def chat_with_report(request: ChatRequest):
         import traceback
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"对话处理失败: {str(e)}"})
+
+
+def _inject_year_mapping(context: str) -> str:
+    """在 RAG 上下文头部注入年份映射说明，解决 LLM 将本期/上期数据年份对调的问题。
+
+    从缓存中获取报告期年份，将"本期"→当年、"上期"→去年的映射关系明确告知 LLM，
+    避免 LLM 自行推断列顺序时出错。
+    """
+    from financial_report_ai_assistant.services.financial_data_store import get_current_cached_data
+    import re
+
+    cached = get_current_cached_data()
+    report_year = None
+
+    if cached:
+        report_period = cached.get("report_period", "")
+        # 从报告期中提取年份，如"中兴通讯 2025年年度报告" → 2025
+        m = re.search(r"(\d{4})年", report_period)
+        if m:
+            report_year = int(m.group(1))
+
+    if not report_year:
+        # 兜底：从上下文中尝试提取年份
+        m = re.search(r"(\d{4})年(?:年度|季度|半年度)报告", context[:500])
+        if m:
+            report_year = int(m.group(1))
+
+    if not report_year:
+        print("[WARN] 无法确定报告年份，跳过年份映射注入")
+        return context
+
+    prev_year = report_year - 1
+    year_note = (
+        f"【年份映射】本报告覆盖{report_year}年度。"
+        f"文中「本期」「期末余额」「期末」对应{report_year}年数据；"
+        f"「上期」「期初余额」「期初」「上年同期」对应{prev_year}年数据。"
+        f"回答时必须使用具体年份（如「{report_year}年为XX，{prev_year}年为XX」），禁止使用「本期」「上期」。\n\n"
+    )
+
+    print(f"[YEAR] 注入年份映射: 本期={report_year}年, 上期={prev_year}年")
+    return year_note + context
 
 
 def _build_enhanced_context(current_context: str, history: list, current_question: str, request_pdf_hash: str = "") -> str:

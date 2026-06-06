@@ -383,3 +383,102 @@ class TestRouting:
         """营收是多少 应走轻量级通道"""
         from financial_report_ai_assistant.core.agent import is_simple_query
         assert is_simple_query("营收是多少？") is True
+
+
+# ============================================================
+# 12. 年份映射注入测试 (_inject_year_mapping)
+# ============================================================
+class TestInjectYearMapping:
+    def test_inject_from_cached_report_period(self):
+        """从缓存的 report_period 中提取年份并注入映射"""
+        from financial_report_ai_assistant.api.main import _inject_year_mapping
+        with patch("financial_report_ai_assistant.services.financial_data_store.get_current_cached_data") as mock_cached:
+            mock_cached.return_value = {"report_period": "中兴通讯 2025年年度报告"}
+            result = _inject_year_mapping("资产负债率为64.74%")
+            assert "2025年" in result
+            assert "2024年" in result
+            assert "本期" in result
+            assert "上期" in result
+
+    def test_inject_from_context_fallback(self):
+        """缓存无数据时，从上下文前500字中提取年份"""
+        from financial_report_ai_assistant.api.main import _inject_year_mapping
+        with patch("financial_report_ai_assistant.services.financial_data_store.get_current_cached_data") as mock_cached:
+            mock_cached.return_value = None
+            context = "中兴通讯 2025年年度报告\n\n资产负债率为64.74%"
+            result = _inject_year_mapping(context)
+            assert "2025年" in result
+            assert "2024年" in result
+
+    def test_no_year_found_skip_injection(self):
+        """无法确定年份时跳过注入，原样返回上下文"""
+        from financial_report_ai_assistant.api.main import _inject_year_mapping
+        with patch("financial_report_ai_assistant.services.financial_data_store.get_current_cached_data") as mock_cached:
+            mock_cached.return_value = None
+            context = "一些没有年份信息的文本"
+            result = _inject_year_mapping(context)
+            assert result == context
+
+    def test_mapping_note_prepended(self):
+        """年份映射说明应被添加到上下文开头"""
+        from financial_report_ai_assistant.api.main import _inject_year_mapping
+        with patch("financial_report_ai_assistant.services.financial_data_store.get_current_cached_data") as mock_cached:
+            mock_cached.return_value = {"report_period": "2025年年度报告"}
+            original = "原始上下文内容"
+            result = _inject_year_mapping(original)
+            assert result.startswith("【年份映射】")
+            assert result.endswith(original)
+
+    def test_mapping_contains_correct_years(self):
+        """映射说明中的年份数字应正确"""
+        from financial_report_ai_assistant.api.main import _inject_year_mapping
+        with patch("financial_report_ai_assistant.services.financial_data_store.get_current_cached_data") as mock_cached:
+            mock_cached.return_value = {"report_period": "2026年第一季度报告"}
+            result = _inject_year_mapping("上下文")
+            assert "2026年" in result
+            assert "2025年" in result
+
+
+# ============================================================
+# 13. 缓存兜底查询测试 (_answer_from_cache fallback)
+# ============================================================
+class TestAnswerFromCacheFallback:
+    def test_eps_from_raw_data(self):
+        """EPS问题应能从raw_data中兜底获取基本每股收益"""
+        from financial_report_ai_assistant.api.main import _answer_from_cache
+        cached = {
+            "computed_metrics": {},  # metrics中没有EPS
+            "raw_data": {"基本每股收益": 1.17, "稀释每股收益": 1.16}
+        }
+        result = _answer_from_cache("EPS是多少？", cached)
+        assert result is not None
+        assert "1.17" in result
+        assert "1.16" in result
+
+    def test_eps_from_metrics_priority(self):
+        """metrics中有EPS时应优先使用metrics"""
+        from financial_report_ai_assistant.api.main import _answer_from_cache
+        cached = {
+            "computed_metrics": {"EPS": "1.17元/股"},
+            "raw_data": {"基本每股收益": 1.17}
+        }
+        result = _answer_from_cache("EPS是多少？", cached)
+        assert result is not None
+        assert "1.17元/股" in result
+
+    def test_turnover_from_raw_data(self):
+        """资产周转率应能从raw_data计算"""
+        from financial_report_ai_assistant.api.main import _answer_from_cache
+        cached = {
+            "computed_metrics": {},  # metrics中没有资产周转率
+            "raw_data": {"营业收入": 133895500000, "总资产": 217739400000}
+        }
+        result = _answer_from_cache("资产周转率", cached)
+        assert result is not None
+        assert "0.61" in result or "0.63" in result  # 约0.61-0.63次
+
+    def test_no_cache_returns_none(self):
+        """无缓存数据时应返回None"""
+        from financial_report_ai_assistant.api.main import _answer_from_cache
+        result = _answer_from_cache("EPS是多少？", {"computed_metrics": {}, "raw_data": {}})
+        assert result is None

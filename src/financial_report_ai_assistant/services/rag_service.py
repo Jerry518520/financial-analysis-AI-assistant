@@ -60,21 +60,16 @@ INDEX_HASH_PATH = INDEX_PATH / ".pdf_hash"  # 记录当前索引对应哪个 PDF
 
 def get_device():
     """
-    获取计算设备。必须有 CUDA GPU，否则直接报错终止。
-    向量化 BGE-M3 模型在 CPU 上极其缓慢，不适合生产使用。
+    获取计算设备。优先使用 CUDA GPU，不可用时回退到 CPU。
+    向量化 BGE-M3 模型在 CPU 上较慢，但仍可正常工作。
     """
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name(0)
         print(f"🟢 检测到 GPU: {device_name}")
         return "cuda"
     else:
-        raise RuntimeError(
-            "❌ 未检测到 CUDA GPU！RAG 向量化需要 GPU 加速。\n"
-            "请检查：\n"
-            "1. 是否安装了 NVIDIA 驱动\n"
-            "2. 是否安装了 CUDA Toolkit\n"
-            "3. 是否安装了支持 CUDA 的 PyTorch (pip install torch --index-url https://download.pytorch.org/whl/cu118)"
-        )
+        print("⚠️ CUDA 不可用，回退到 CPU（向量化会较慢）")
+        return "cpu"
 
 def preview_chunks(full_text: str, max_chars: int = 500):
     """预览切块效果（简单按页切分）"""
