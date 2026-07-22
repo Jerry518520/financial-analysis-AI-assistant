@@ -14,8 +14,9 @@ load_dotenv()
 
 from fastapi import FastAPI, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, FileResponse
 from pydantic import BaseModel
+from pathlib import Path
 import uvicorn
 import os
 import hashlib
@@ -33,6 +34,9 @@ from financial_report_ai_assistant.api.analysis import router as analysis_router
 import threading
 
 app = FastAPI(title="AI 财报分析助手")
+
+# 前端文件路径（frontend/index.html）
+FRONTEND_DIR = Path(__file__).parent.parent.parent.parent / "frontend"
 
 # 【新增】保存当前 PDF 路径，供 /highlight 使用
 CURRENT_PDF_PATH = None
@@ -56,7 +60,15 @@ class ChatRequest(BaseModel):
     pdf_hash: str = ""  # 前端当前文档哈希，用于校验历史数据一致性
 
 @app.get("/")
-def read_root():
+def serve_frontend():
+    """Serve index.html as the main frontend"""
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path), media_type="text/html")
+    return JSONResponse(status_code=404, content={"error": "index.html not found"})
+
+@app.get("/health")
+def health():
     return {"status": "ok"}
 
 @app.post("/upload")

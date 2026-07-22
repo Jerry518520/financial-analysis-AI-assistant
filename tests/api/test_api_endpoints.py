@@ -84,10 +84,14 @@ def sample_pdf():
 # ============================================================
 class TestHealthCheck:
     def test_root(self, client):
+        """GET / 返回前端页面（HTML，200）；健康检查 JSON 由 GET /health 承担"""
         resp = client.get("/")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "ok"
+        assert "text/html" in resp.headers.get("content-type", "")
+
+    def test_health(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
 
 
 # ============================================================

@@ -108,11 +108,11 @@ class TestGetDevice:
         assert get_device() == "cuda"
 
     @patch("financial_report_ai_assistant.services.rag_service.torch.cuda.is_available")
-    def test_no_cuda_raises_error(self, mock_cuda):
+    def test_no_cuda_falls_back_to_cpu(self, mock_cuda):
+        """无 CUDA 时优雅回退到 CPU（实现行为：不抛错，返回 cpu）"""
         mock_cuda.return_value = False
         from financial_report_ai_assistant.services.rag_service import get_device
-        with pytest.raises(RuntimeError, match="CUDA GPU"):
-            get_device()
+        assert get_device() == "cpu"
 
 
 # ============================================================
@@ -144,7 +144,7 @@ class TestPreviewChunks:
 # 6. query_rag - RAG 查询（mock vector_store）
 # ============================================================
 class TestQueryRag:
-    @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
+    @patch("financial_report_ai_assistant.services.rag_service._load_vector_store_internal")
     def test_no_vector_store_and_no_cache(self, mock_load):
         """vector_store 为空且无法加载缓存"""
         mock_load.return_value = False
@@ -177,7 +177,7 @@ class TestQueryRag:
 # 7. query_rag_with_source - 带来源的 RAG 查询
 # ============================================================
 class TestQueryRagWithSource:
-    @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
+    @patch("financial_report_ai_assistant.services.rag_service._load_vector_store_internal")
     def test_no_vector_store(self, mock_load):
         mock_load.return_value = False
         import financial_report_ai_assistant.services.rag_service as rag_module
@@ -302,10 +302,10 @@ class TestQueryRagWithSource:
 # 8. build_vector_store - 向量库构建（mock 外部依赖）
 # ============================================================
 class TestBuildVectorStore:
-    @patch("financial_report_ai_assistant.services.rag_service.load_vector_store")
-    def test_empty_text_returns_false(self, mock_load):
-        """空文本应返回 False"""
-        mock_load.return_value = False
+    @patch("financial_report_ai_assistant.services.rag_service.SentenceTransformerEmbeddings")
+    @patch("financial_report_ai_assistant.services.rag_service._reset_index_state")
+    def test_empty_text_returns_false(self, mock_reset, mock_emb):
+        """空文本应返回 False（mock 模型加载与索引重置，避免触碰磁盘索引）"""
         import financial_report_ai_assistant.services.rag_service as rag_module
         rag_module.vector_store = None
 

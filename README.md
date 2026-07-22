@@ -1,4 +1,4 @@
-# 财报AI分析助手 (Financial Report AI Assistant)
+# AI财报分析助手 (Financial Report AI Assistant)
 
 <p align="center">
   <img alt="Python Version" src="https://img.shields.io/badge/python-3.11-blue">
