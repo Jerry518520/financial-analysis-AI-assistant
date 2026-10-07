@@ -155,6 +155,30 @@ class TestChat:
         assert resp.json()["source_page"] == 1
 
 
+class TestChatWithoutDocument:
+    """未上传/未解析任何财报时的 /chat 行为"""
+
+    def test_chat_without_index_returns_friendly_message(self, client):
+        """知识库未建立时应返回 200 + 明确提示，不得调用 LLM（否则缺/错 API Key 会 500）"""
+        from financial_report_ai_assistant.services.rag_service import RAG_INDEX_MISSING
+        # 注意：run_lightweight_query 是在 /chat 函数体内才 import 的，
+        # 因此要 patch agent 模块本身；run_agent_query 是模块级 import，patch main 里的名字。
+        with patch("financial_report_ai_assistant.api.main.query_rag_with_source") as mock_rag, \
+             patch("financial_report_ai_assistant.core.agent.run_lightweight_query") as mock_light, \
+             patch("financial_report_ai_assistant.api.main.run_agent_query") as mock_agent:
+            mock_rag.return_value = {
+                "context": RAG_INDEX_MISSING + "。",
+                "page_num": 1,
+                "source_pages": [],
+            }
+            resp = client.post("/chat", json={"question": "营业收入是多少"})
+
+        assert resp.status_code == 200
+        assert "请先上传" in resp.json()["answer"]
+        mock_light.assert_not_called()
+        mock_agent.assert_not_called()
+
+
 # ============================================================
 # 4. GET /highlight - 高亮渲染
 # ============================================================
@@ -430,7 +454,9 @@ class TestInjectYearMapping:
             mock_cached.return_value = {"report_period": "2025年年度报告"}
             original = "原始上下文内容"
             result = _inject_year_mapping(original)
-            assert result.startswith("【年份映射】")
+            # 说明块使用 ⚠️ 警告框格式（加粗提高 LLM 注意力），不再使用旧的【年份映射】前缀
+            assert result.startswith("⚠️")
+            assert "年份映射" in result[:50]
             assert result.endswith(original)
 
     def test_mapping_contains_correct_years(self):

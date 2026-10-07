@@ -195,16 +195,41 @@ def _is_pymupdf_extraction_good(page_text: str) -> bool:
     # 质量标准：有财务关键词 + 数字密度 > 3% + 行数 > 5
     return has_financial_kw and digit_ratio > 0.03 and line_count > 5
 
-def get_cache_path(file_content: bytes) -> str:
+def get_cache_path(file_content: bytes, parser_mode: str = "hybrid") -> str:
     # 简单的哈希缓存，避免重复解析同一文件
+    # 缓存键包含解析模式：不同 parser 模式产出的文本不同，不能共用缓存
     file_hash = hashlib.md5(file_content).hexdigest()
-    return os.path.join(CACHE_DIR, f"parsed_hybrid_{file_hash}.md")
+    return os.path.join(CACHE_DIR, f"parsed_{parser_mode}_{file_hash}.md")
 
-def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
-    print(f"🚀 [Hybrid Parser] 启动混合解析引擎...")
-    
+# 前端「解析引擎」下拉可选值 → 缓存键片段
+# auto:       PyMuPDF 优先，效果不佳时降级 LlamaParse（默认，与历史行为一致）
+# llamaparse: 强制所有表格/图表页走 LlamaParse
+# pymupdf:    仅用 PyMuPDF，完全不调用 LlamaParse（离线可用）
+_PARSER_MODES = {"auto": "hybrid", "llamaparse": "llama", "pymupdf": "pymupdf"}
+
+
+def parse_pdf_bytes(file_content: bytes, parser: str = "auto") -> Dict[str, Any]:
+    """解析 PDF。
+
+    parser: 解析引擎选择（对应前端下拉框）
+      - "auto"（默认）：PyMuPDF 优先，质量不佳时降级 LlamaParse
+      - "llamaparse"：强制表格/图表页走 LlamaParse
+      - "pymupdf"：只用 PyMuPDF，不联网调用 LlamaParse
+    """
+    parser = (parser or "auto").lower().strip()
+    if parser not in _PARSER_MODES:
+        print(f"⚠️ 未知的解析引擎 '{parser}'，回退为 auto")
+        parser = "auto"
+    parser_mode = _PARSER_MODES[parser]
+    # 强制走 LlamaParse（前端选择 或 环境变量）
+    force_llama = parser == "llamaparse" or FORCE_LLAMA_PARSE
+    # 禁用 LlamaParse（前端选择）
+    disable_llama = parser == "pymupdf"
+
+    print(f"🚀 [Hybrid Parser] 启动混合解析引擎... (parser={parser})")
+
     # 1. 检查全量缓存
-    cache_path = get_cache_path(file_content)
+    cache_path = get_cache_path(file_content, parser_mode)
     if os.path.exists(cache_path):
         print(f"♻️ 发现本地完整缓存！直接加载...")
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -278,8 +303,8 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                 # 尝试 PyMuPDF 提取
                 pymupdf_result = _extract_table_with_pymupdf(page)
                 
-                # 检查提取质量
-                if _is_pymupdf_extraction_good(pymupdf_result) and not FORCE_LLAMA_PARSE:
+                # 检查提取质量（force_llama 来自前端选择或 FORCE_LLAMA_PARSE 环境变量）
+                if _is_pymupdf_extraction_good(pymupdf_result) and not force_llama:
                     # PyMuPDF 提取效果好，直接使用
                     print(f"✅ Page {idx+1}: PyMuPDF 提取成功")
                     pymupdf_table_pages[idx] = f"--- Page {idx+1} ---\n{pymupdf_result}\n"
@@ -288,6 +313,15 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
                     print(f"⚠️ Page {idx+1}: PyMuPDF 效果不佳，将使用 LlamaParse")
                     pages_need_llama.append(idx)
             
+            # 已选择「仅 PyMuPDF」：不调用 LlamaParse，直接降级为页面全文
+            if pages_need_llama and disable_llama:
+                print(f"ℹ️ {len(pages_need_llama)} 页 PyMuPDF 效果不佳，但当前为仅 PyMuPDF 模式，跳过 LlamaParse")
+                for idx in pages_need_llama:
+                    page = doc[idx]
+                    text = page.get_text()
+                    pymupdf_table_pages[idx] = f"--- Page {idx+1} (PyMuPDF Fallback) ---\n{text}\n"
+                pages_need_llama = []
+
             # 对 PyMuPDF 效果不好的页面，使用 LlamaParse（限制数量）
             if pages_need_llama:
                 target_indices = pages_need_llama[:MAX_LLAMA_PAGES]
@@ -348,7 +382,17 @@ def parse_pdf_bytes(file_content: bytes) -> Dict[str, Any]:
         # 3b. 处理图片/图表页面（直接送往 LlamaParse，跳过 PyMuPDF）
         if image_pages_indices:
             api_key = os.getenv("LLAMA_CLOUD_API_KEY")
-            if not api_key:
+            if disable_llama:
+                # 仅 PyMuPDF 模式：图表页不做解析，但保留标记供 LLM 判断数据完整性
+                print(f"ℹ️ 当前为仅 PyMuPDF 模式，{len(image_pages_indices)} 页图表不做提取")
+                for idx in image_pages_indices:
+                    page = doc[idx]
+                    text = page.get_text()
+                    text_pages_content[idx] = (
+                        f"--- Page {idx+1} ---\n{text}\n"
+                        f"[注：本页包含图片/图表，当前为仅 PyMuPDF 模式，未做图表提取]"
+                    )
+            elif not api_key:
                 print(f"⚠️ 缺少 LLAMA_CLOUD_API_KEY，{len(image_pages_indices)} 页图表无法提取")
                 for idx in image_pages_indices:
                     page = doc[idx]

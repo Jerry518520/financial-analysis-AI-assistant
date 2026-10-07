@@ -32,7 +32,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     || (rm -rf /root/.cache/pip/http /root/.cache/pip/wheels \
         && pip install --no-deps https://download.pytorch.org/whl/cu126/torch-2.10.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl)
 
-# ====== 第二层：其余 Python 依赖（requirements-docker.txt 不含 torch）======
+# ====== 第二层：其余 Python 依赖 ======
+# requirements-docker.txt 里仍有一行 torch==2.10.0，但不会覆盖第一层的 CUDA 版：
+# PEP 440 规定「specifier 未带本地版本号时忽略候选版本的本地段」，
+# 所以已装的 2.10.0+cu126 满足 ==2.10.0，pip 不会重新下载 CPU 版。
+# ⚠️ 若未来升级 torch，第一层的 wheel 文件名必须同步改，否则会装回 CPU 版。
 # poetry export --without-hashes --only main 生成，排除 dev 依赖
 # 阿里云镜像偶发超时，加大超时和重试；失败时清缓存回退到清华源
 COPY requirements-docker.txt ./
@@ -48,6 +52,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 # ====== 第四层：项目代码（变更最频繁，放最后）======
 COPY src/ ./src/
+# 内置 HTML 前端（由 FastAPI 的 GET / 直接伺服，端口 8000）
+# 必须一起打包：否则容器内 / 路由会 404，健康检查与内置 UI 都会失效
+COPY frontend/ ./frontend/
 
 # 创建必要的缓存目录
 RUN mkdir -p cache_data faiss_index

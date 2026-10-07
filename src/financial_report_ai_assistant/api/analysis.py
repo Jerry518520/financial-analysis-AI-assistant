@@ -468,6 +468,21 @@ def _inject_missing_data(summary: str, computed_data_str: str) -> str:
     for k, v in computed_items:
         print(f"   - {k}: {v}")
 
+    # 指标名称的同义词/别名映射（用于更灵活的匹配）
+    _KEY_ALIASES = {
+        "流动比率": ["流动比率", "流动资金比率", "流动资产/流动负债", "流动资产合计/流动负债合计"],
+        "速动比率": ["速动比率", "速动资金比率", "(流动资产-存货)/流动负债"],
+        "资产负债率": ["资产负债率", "负债率", "负债/资产"],
+        "毛利率": ["毛利率", "销售毛利率", "综合毛利率"],
+        "净利率": ["净利率", "销售净利率", "净利润率"],
+        "ROE": ["ROE", "净资产收益率", "权益报酬率"],
+        "EPS": ["EPS", "每股收益", "基本每股收益"],
+        "营收增长率": ["营收增长率", "营业收入增长率", "收入增长率"],
+        "净利润增长率": ["净利润增长率", "利润增长率"],
+        "资产周转率": ["资产周转率", "总资产周转率"],
+        "存货周转率": ["存货周转率"],
+    }
+
     # 检查哪些指标在摘要中缺失
     missing = []
     summary_clean = summary.replace(",", "").replace(" ", "")
@@ -475,10 +490,25 @@ def _inject_missing_data(summary: str, computed_data_str: str) -> str:
     for key, value in computed_items:
         # 提取数值部分（去掉百分号、亿元等）
         value_clean = value.replace(",", "").replace(" ", "")
-        # 【修复】必须同时包含指标名称和数值，才算真正包含
-        # 避免"1.20"等短数字在页码/章节编号等位置被误匹配
+
+        # 策略1: 精确匹配（指标名称 + 数值同时出现）
         key_in = key in summary_clean
         val_in = value_clean in summary_clean
+
+        # 策略2: 别名匹配（如果精确匹配失败，尝试别名）
+        if not key_in:
+            aliases = _KEY_ALIASES.get(key, [])
+            for alias in aliases:
+                if alias in summary_clean:
+                    key_in = True
+                    break
+
+        # 策略3: 数值匹配增强（对于短数值如"1.20"，检查是否在合理上下文中）
+        # 如果数值长度<=4（如"1.20"、"0.82"），要求同时有指标名称才算匹配
+        if val_in and len(value_clean) <= 4 and not key_in:
+            # 短数值但没有指标名称 → 可能是误匹配（如页码"1.20"）
+            val_in = False
+
         if not key_in or not val_in:
             missing.append((key, value))
             print(f"   ❌ 缺失: {key}={value} (key_in={key_in}, val_in={val_in})")

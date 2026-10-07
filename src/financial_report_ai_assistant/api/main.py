@@ -28,7 +28,7 @@ from financial_report_ai_assistant.services.document_parser import parse_pdf_byt
 # from financial_report_ai_assistant.services.ai_chat import get_ai_response # 废弃，改用 Agent
 from financial_report_ai_assistant.core.agent import run_agent_query, generate_recommendations
 # 【新增】导入 RAG 服务
-from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, clear_pending_state, RAG_NOT_FOUND, RAG_INDEX_BUILDING
+from financial_report_ai_assistant.services.rag_service import build_vector_store, query_rag, query_rag_with_source, get_current_pdf_hash, clear_pending_state, RAG_NOT_FOUND, RAG_INDEX_BUILDING, RAG_INDEX_MISSING
 # 【新增】导入 Analysis 路由
 from financial_report_ai_assistant.api.analysis import router as analysis_router
 import threading
@@ -72,7 +72,10 @@ def health():
     return {"status": "ok"}
 
 @app.post("/upload")
-async def upload_financial_report(file: UploadFile = File(...)):
+async def upload_financial_report(
+    file: UploadFile = File(...),
+    parser: str = Query("auto", description="解析引擎: auto | llamaparse | pymupdf"),
+):
     global CURRENT_PDF_PATH
     content = await file.read()
     
@@ -91,7 +94,8 @@ async def upload_financial_report(file: UploadFile = File(...)):
         print(f"[PDF] 已保存: {pdf_path}")
 
         # 1. 解析 PDF (获取全量文本)
-        result = parse_pdf_bytes(content)
+        print(f"[UPLOAD] 解析引擎: {parser}")
+        result = parse_pdf_bytes(content, parser=parser)
         
         # 2. 构建 RAG 向量库（传入文件哈希，新文件自动重建索引）
         full_text = result.get("full_text", "")
@@ -267,6 +271,16 @@ async def chat_with_report(request: ChatRequest):
                 "recommendations": ["请稍后重试"]
             }
 
+        # 尚未上传/解析任何财报时，直接返回提示，避免无意义的 LLM 调用
+        # （否则会因为空上下文 + 缺失/无效 API Key 直接抛 401 → 500）
+        if RAG_INDEX_MISSING in relevant_context and not request.conversation_history:
+            return {
+                "answer": "还没有可分析的财报。请先上传一份 PDF 财报并完成解析，再提问。",
+                "source_page": 1,
+                "source_pages": [],
+                "recommendations": ["上传财报后查看核心摘要", "营收是多少", "净利润是多少"]
+            }
+
         # RAG 未找到相关内容时，直接返回提示，不浪费 LLM 调用
         if RAG_NOT_FOUND in relevant_context and not request.conversation_history:
             return {
@@ -321,6 +335,8 @@ def _inject_year_mapping(context: str) -> str:
 
     从缓存中获取报告期年份，将"本期"→当年、"上期"→去年的映射关系明确告知 LLM，
     避免 LLM 自行推断列顺序时出错。
+
+    同时将上下文中的"本期/上期"替换为具体年份，减少歧义。
     """
     from financial_report_ai_assistant.services.financial_data_store import get_current_cached_data
     import re
@@ -346,15 +362,27 @@ def _inject_year_mapping(context: str) -> str:
         return context
 
     prev_year = report_year - 1
+
+    # 在上下文头部插入醒目的年份映射（加粗 + 警告框格式，提高 LLM 注意力）
     year_note = (
-        f"【年份映射】本报告覆盖{report_year}年度。"
-        f"文中「本期」「期末余额」「期末」对应{report_year}年数据；"
-        f"「上期」「期初余额」「期初」「上年同期」对应{prev_year}年数据。"
-        f"回答时必须使用具体年份（如「{report_year}年为XX，{prev_year}年为XX」），禁止使用「本期」「上期」。\n\n"
+        f"⚠️ **年份映射规则（必须严格遵守）** ⚠️\n"
+        f"本报告为{report_year}年年度报告。\n"
+        f"- 「本期」「期末余额」「期末」= **{report_year}年**\n"
+        f"- 「上期」「期初余额」「期初」「上年同期」= **{prev_year}年**\n"
+        f"- 财务报表中**左边/前面**的列是{report_year}年（较新年份），**右边/后面**的列是{prev_year}年（较旧年份）\n"
+        f"- 回答时必须使用具体年份（如「{report_year}年为XX，{prev_year}年为XX」），禁止使用「本期」「上期」\n"
+        f"- 禁止将{report_year}年和{prev_year}年的数据互换！\n\n"
     )
 
+    # 替换上下文中的"本期/上期"为具体年份（减少歧义）
+    modified_context = context
+    modified_context = re.sub(r'本期余额', f'{report_year}年余额', modified_context)
+    modified_context = re.sub(r'上期余额', f'{prev_year}年余额', modified_context)
+    modified_context = re.sub(r'本期发生额', f'{report_year}年发生额', modified_context)
+    modified_context = re.sub(r'上期发生额', f'{prev_year}年发生额', modified_context)
+
     print(f"[YEAR] 注入年份映射: 本期={report_year}年, 上期={prev_year}年")
-    return year_note + context
+    return year_note + modified_context
 
 
 def _build_enhanced_context(current_context: str, history: list, current_question: str, request_pdf_hash: str = "") -> str:
@@ -401,6 +429,10 @@ async def chat_debug(request: ChatRequest):
 
         if RAG_INDEX_BUILDING in relevant_context:
             return {"answer": "新文档正在处理中，请稍等片刻后重试。",
+                    "contexts": [], "source_page": 1, "source_pages": []}
+
+        if RAG_INDEX_MISSING in relevant_context and not request.conversation_history:
+            return {"answer": "还没有可分析的财报。请先上传一份 PDF 财报并完成解析，再提问。",
                     "contexts": [], "source_page": 1, "source_pages": []}
 
         if RAG_NOT_FOUND in relevant_context and not request.conversation_history:

@@ -6,9 +6,10 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Any
 
-# 配置 HuggingFace 镜像
-os.environ["HF_HUB_URL"] = "https://hf-mirror.com"
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# 配置 HuggingFace 镜像（国内网络访问 huggingface.co 会超时）
+# 用 setdefault：允许通过环境变量/docker-compose 覆盖为其他镜像或官方源
+os.environ.setdefault("HF_HUB_URL", "https://hf-mirror.com")
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 from sentence_transformers import SentenceTransformer
 from langchain_community.vectorstores import FAISS
@@ -393,10 +394,10 @@ def _expand_query(question: str) -> List[str]:
         "净利润": ["归属于母公司所有者的净利润", "利润总额", "归母净利润"],
         "毛利率": ["营业收入", "营业成本", "综合毛利率", "国内市场毛利率", "国际市场毛利率", "分板块毛利率"],
         "净利率": ["净利润", "营业收入", "销售净利率"],
-        "EPS": ["每股收益", "基本每股收益", "稀释每股收益"],
-        "每股收益": ["基本每股收益", "稀释每股收益", "EPS"],
-        "资产周转率": ["总资产周转率", "营业收入", "总资产"],
-        "总资产周转率": ["资产周转率", "营业收入", "总资产"],
+        "EPS": ["每股收益", "基本每股收益", "稀释每股收益", "总股本", "股本"],
+        "每股收益": ["基本每股收益", "稀释每股收益", "EPS", "总股本", "股本"],
+        "资产周转率": ["总资产周转率", "营业收入", "总资产", "资产总计"],
+        "总资产周转率": ["资产周转率", "营业收入", "总资产", "资产总计"],
         "存货周转率": ["存货", "营业成本"],
         "速动比率": ["流动资产", "存货", "流动负债"],
         "流动比率": ["流动资产", "流动负债"],
@@ -418,8 +419,9 @@ def _expand_query(question: str) -> List[str]:
         fuzzy_map = {
             "周转": ["资产周转率", "存货周转率", "总资产周转率"],
             "盈利": ["净利润", "毛利率", "净利率", "ROE"],
-            "收益": ["每股收益", "EPS", "净利润"],
+            "收益": ["每股收益", "EPS", "净利润", "总股本", "股本"],
             "偿债": ["资产负债率", "流动比率", "速动比率"],
+            "股": ["总股本", "股本", "每股收益"],
         }
         for keyword, related_terms in fuzzy_map.items():
             if keyword in q:
@@ -473,8 +475,8 @@ def query_rag_with_source(question: str, top_k: int = 5, similarity_threshold: f
         if expansions:
             EXPANSION_SCORE_DECAY = 0.85
             seen_contents = {doc.page_content for doc, _ in docs_and_scores}
-            # 每个扩展词独立查询，最多取 3 个（避免过多 API 调用）
-            for term in expansions[:3]:
+            # 每个扩展词独立查询，最多取 5 个（提高财务数据召回率）
+            for term in expansions[:5]:
                 print(f"🔄 查询扩展词: {term}")
                 term_results = vector_store.similarity_search_with_score(term, k=top_k + 3)
                 for doc, score in term_results:

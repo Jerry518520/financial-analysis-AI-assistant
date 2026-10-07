@@ -179,9 +179,9 @@
                 <div class="mb-4">
                     <label class="block text-xs text-gray-500 mb-1">选择解析引擎</label>
                     <select id="parserSelect" class="w-full bg-neutral border border-gray-200 text-dark text-sm rounded-lg p-2.5 focus:outline-none focus:border-primary">
-                        <option value="llamaparse">📄 LlamaParse (默认)</option>
-                        <option value="kimi">🔮 Kimi 多模态</option>
-                        <option value="mimo">🤖 MiMo 多模态</option>
+                        <option value="auto">⚙️ 自动（PyMuPDF 优先，效果差时降级 LlamaParse）</option>
+                        <option value="llamaparse">📄 强制 LlamaParse（表格效果最好，需 API Key）</option>
+                        <option value="pymupdf">⚡ 仅 PyMuPDF（离线，不调用 LlamaParse）</option>
                     </select>
                 </div>
 
@@ -516,47 +516,6 @@
                 document.getElementById('progressContainer').classList.add('hidden');
             }
         });
-
-        const pollStatus = (jobId, filename) => {
-            const interval = setInterval(async () => {
-                try {
-                    const res = await fetch(`${API_URL}/status/${jobId}`);
-                    const job = await res.json();
-                    
-                    if (job.status === "done") {
-                        clearInterval(interval);
-                        document.getElementById('progressBar').style.width = "100%";
-                        document.getElementById('progressPct').innerText = "100%";
-                        document.getElementById('progressText').innerText = "✅ 解析完成！";
-                        showToast("财报解析完成，可以开始提问了", "success");
-
-                        currentPdfHash = job.result.pdf_hash || "";
-                        document.getElementById('currentFileName').innerText = filename;
-                        document.getElementById('currentFileStatus').querySelector('i').className = "fa-solid fa-file-invoice text-secondary";
-                        
-                        document.getElementById('workspaceOverlay').classList.add('hidden');
-                        uploadBtn.disabled = false;
-                        chatHistory = []; // 换文件清空对话
-                        setTimeout(() => document.getElementById('progressContainer').classList.add('hidden'), 3000);
-                    } else if (job.status === "processing") {
-                        const progText = job.progress || "解析中...";
-                        document.getElementById('progressText').innerText = `🔍 ${progText}`;
-                        const match = progText.match(/\((\d+)\/(\d+)\)/);
-                        if (match) {
-                            const pct = Math.min(95, 10 + 85 * (parseInt(match[1]) / Math.max(parseInt(match[2]), 1)));
-                            document.getElementById('progressBar').style.width = `${pct}%`;
-                            document.getElementById('progressPct').innerText = `${Math.floor(pct)}%`;
-                        }
-                    } else if (job.status === "error") {
-                        throw new Error(job.error || "未知错误");
-                    }
-                } catch(err) {
-                    clearInterval(interval);
-                    showToast(`查询状态失败: ${err.message}`, "error");
-                    uploadBtn.disabled = false;
-                }
-            }, 3000);
-        };
 
         // --- 摘要与雷达图逻辑 ---
         document.getElementById('generateSummaryBtn').addEventListener('click', async () => {

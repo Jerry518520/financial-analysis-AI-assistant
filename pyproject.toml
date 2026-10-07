@@ -9,14 +9,21 @@ readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "fastapi (>=0.116.1,<0.117.0)",
-    "streamlit (>=1.48.0,<2.0.0)",
     "uvicorn[standard] (>=0.35.0,<0.36.0)",
     "pymupdf (>=1.26.3,<2.0.0)",
+    # 本项目代码不直接用 pandas，但它是运行时必需：
+    # sentence-transformers → scikit-learn → sklearn/utils/fixes.py 顶层 import pandas。
+    # scikit-learn 未在自己的元数据里声明 pandas，一旦不显式声明，
+    # Docker 镜像会把 pandas 漏掉，后端启动时直接 ModuleNotFoundError。
     "pandas (>=2.3.1,<3.0.0)",
     "python-multipart (>=0.0.20,<0.0.21)",
     "requests (>=2.32.4,<3.0.0)",
     "langchain (>=1.0.8,<2.0.0)",
     "langchain-openai (>=1.0.3,<2.0.0)",
+    # Agent 工作流直接 import（core/agent.py: StateGraph / END），此前只作为 langchain 的传递依赖存在
+    "langgraph (>=1.2.0,<2.0.0)",
+    # api/main.py 显式 import，用于避免 Windows + Python 3.13 下 uvicorn 加载时的 DLL 初始化崩溃
+    "pyarrow (>=18.0.0,<25.0.0)",
     "python-dotenv (>=1.2.1,<2.0.0)",
     "faiss-cpu (>=1.13.0,<2.0.0)",
     "tiktoken (>=0.12.0,<0.13.0)",
@@ -26,9 +33,10 @@ dependencies = [
     "tabulate (>=0.9.0,<0.10.0)",
     "llama-parse (>=0.6.81,<0.7.0)",
     "torch (>=2.10.0,<2.11.0)",
-    "Pillow (>=11.0.0,<12.0.0)",
-    "markdown (>=3.6,<4.0)",
-    "plotly (>=6.0.0,<7.0.0)"
+    "Pillow (>=11.0.0,<12.0.0)"
+    # 前端为纯静态 HTML（frontend/index.html，由后端 GET / 伺服），
+    # 因此不再需要 streamlit / plotly / markdown 等 Python 前端依赖
+    # （pandas 例外：见上方注释，它是 sklearn 的运行时隐式依赖，必须保留）
 ]
 
 [tool.poetry]
@@ -72,6 +80,11 @@ build-backend = "poetry.core.masonry.api"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+# 只收集 test_*.py。
+# tests/integration_test.py、tests/integration_test_full.py 是「手动脚本」而非单元测试：
+# 它们需要本机已启动后端 + 项目根的 example_report.pdf，被 pytest 收集时会导致长时间卡死。
+# 这两个脚本请手动运行（见 README「运行测试」）。
+python_files = ["test_*.py"]
 
 [tool.poe.tasks]
 start = { cmd = "uvicorn financial_report_ai_assistant.api.main:app --reload --app-dir src", help = "Starts the FastAPI development server." }

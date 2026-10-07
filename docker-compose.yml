@@ -13,12 +13,21 @@ services:
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
-      # HuggingFace 镜像源（解决网络访问问题）
-      - HF_ENDPOINT=https://hf-mirror.com
+      # 强制所有表格页走 LlamaParse（在 .env 中设置 FORCE_LLAMA_PARSE=true 即可生效）
+      # 注意：Docker Compose 的 .env 只做 ${} 替换，不会自动注入容器，必须在此显式列出
+      - FORCE_LLAMA_PARSE=${FORCE_LLAMA_PARSE:-false}
+      # HuggingFace 镜像源（解决网络访问问题）；留空则用代码内置默认值 hf-mirror.com
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       # FAISS 索引路径（必须与 volume 挂载点一致）
       - FAISS_INDEX_PATH=/app/faiss_index
       # 如果有其他环境变量，继续添加
-    # 添加 GPU 支持
+    # ====== GPU 支持（Docker 部署必需）======
+    # 需要：NVIDIA 显卡 + 已安装 NVIDIA 驱动 + nvidia-container-toolkit。
+    # 没有 GPU 的机器不要走 Docker 部署：docker compose 会在创建容器阶段直接报
+    #   "could not select device driver \"nvidia\""
+    # 此时请改用「本地开发」路径（poetry install），代码会自动回退到 CPU。
+    # 若确实要在无 GPU 环境下跑容器，把下面整个 deploy: 块注释掉即可
+    # （embedding 会跑 CPU，向量化明显变慢，其余功能不受影响）。
     deploy:
       resources:
         reservations:
@@ -28,38 +37,13 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     command: uvicorn financial_report_ai_assistant.api.main:app --host 0.0.0.0 --port 8000
-    # 健康检查：frontend 会等 backend healthy 后才启动
+    # 前端是纯静态 HTML（frontend/index.html），由本服务的 GET / 直接伺服，
+    # 不需要独立的前端容器，浏览器访问 http://localhost:8000 即可。
+    # ⚠️ 健康检查必须打 /health：/ 路由依赖静态文件，缺文件会返回 404，
+    # urlopen 抛 HTTPError 会导致健康检查永不通过。
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - app-network
-
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    container_name: financial_report_frontend
-    ports:
-      - "8501:8501"
-    environment:
-      # API_URL 是 Streamlit 服务端（Python 进程）调用 backend 用的
-      # backend 也在 Docker 容器中，必须用 Docker 内部网络域名 http://backend:8000
-      # 不要用 host.docker.internal（那是访问宿主机用的）
-      - API_URL=http://backend:8000
-      # viewer 模式：隐藏开发者菜单，避免 Ctrl+C 触发 "Clear caches" 弹窗
-      - STREAMLIT_CLIENT_TOOLBAR_MODE=viewer
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-    command: streamlit run frontend/main.py --server.address 0.0.0.0 --server.port 8501
-    networks:
-      - app-network
-
-networks:
-  app-network:
-    driver: bridge
