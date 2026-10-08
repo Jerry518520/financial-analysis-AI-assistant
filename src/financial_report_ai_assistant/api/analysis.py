@@ -1131,9 +1131,9 @@ def _compute_ratios_from_raw(raw: dict) -> dict:
     # ===== 资产质量 =====
     if 营业收入 and 平均总资产:
         metrics["资产周转率"] = calculate_turnover(营业收入, 总资产, raw.get("上期总资产"))
-    if 营业成本 and 平均存货:
+    if 营业成本 and 平均存货 and raw.get("存货") is not None:
         metrics["存货周转率"] = calculate_inventory_turnover(营业成本, raw.get("存货"), raw.get("期初存货"))
-    if 营业收入 and 平均应收账款:
+    if 营业收入 and 平均应收账款 and raw.get("应收账款") is not None:
         metrics["应收账款周转率"] = calculate_receivables_turnover(营业收入, raw.get("应收账款"), raw.get("平均应收账款"))
     if 经营活动现金流净额 and 平均总资产:
         metrics["现金回收率"] = _safe_div(经营活动现金流净额, 平均总资产)
