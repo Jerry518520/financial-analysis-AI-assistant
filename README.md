@@ -13,6 +13,53 @@
 
 ---
 
+## 项目规模与关键实现
+
+| 维度 | 实现 |
+|---|---|
+| Agent 工作流 | LangGraph 闭环：规划 → 工具调用 → 反思 → 重试，最多 **5 轮**迭代收敛 |
+| 工具层 | 封装 **19 个**财务计算工具 |
+| 文档解析 | LlamaParse 混合解析，攻克中文财报 PDF **无边框表格** |
+| 检索 | BGE-M3 + FAISS，核心指标语义检索（Top-K）+ BM25 混合 |
+| 部署 | Docker Compose 一键启动，GPU / CPU 依赖分离 + 健康检查 |
+
+> ⚠️ 当前状态：检索与工具调用链路已完整跑通并通过集成测试，但尚未建立系统性的检索质量评测基线。
+> 这是下一步工作。我认为「能跑通 Demo」不等于「效果可控」。
+
+---
+
+## Agent 工作流
+
+```
+用户提问
+   ↓
+任务规划
+   ↓
+工具调用（19 个财务工具）
+   ↓
+结果反思 ── 未收敛则回到「任务规划」重试，最多 5 轮
+   ↓
+生成分析 + 引用溯源 + 能力雷达图
+```
+
+- **状态管理**：上下文按需裁剪，避免多轮工具调用后上下文膨胀。
+- **失败处理**：LLM 调用失败按退避策略重试；工具执行异常时回退到已有结果，而不是用幻觉填充。
+- **集成测试**：`tests/` 下含 `integration_test.py` / `integration_agent_test.py` / `integration_test_full.py`。
+
+---
+
+## 技术栈概览
+
+| 层 | 技术 |
+|---|---|
+| Agent | LangGraph · LangChain · ReAct · Function Calling |
+| 解析与检索 | LlamaParse · BGE-M3 · FAISS |
+| 后端 | Python 异步 · FastAPI · Uvicorn |
+| 前端 | HTML + Tailwind + ECharts |
+| 部署 | Docker Compose，CUDA 12.6 |
+
+---
+
 ## 核心功能
 
 - **智能PDF解析**: PyMuPDF + LlamaParse 混合解析，支持无边框表格。可在界面上选择解析引擎：`自动` / `强制 LlamaParse` / `仅 PyMuPDF（离线）`
