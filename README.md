@@ -1,5 +1,7 @@
 # AI财报分析助手 (Financial Report AI Assistant)
 
+<p align="right"><a href="README.en.md">English</a> | <b>中文</b></p>
+
 <p align="center">
   <img alt="Python Version" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Framework" src="https://img.shields.io/badge/Backend-FastAPI-green">
