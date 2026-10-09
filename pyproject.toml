@@ -3,7 +3,7 @@ name = "financial-report-ai-assistant"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Your Name",email = "you@example.com"}
+    {name = "Bingjie Li",email = "jerrylbj@foxmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
